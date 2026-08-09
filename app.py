@@ -437,7 +437,7 @@ def make_qr_png(data):
 
 
 def show_uppa_logo(width=420):
-    logo_path = Path(__file__).parent / "assets" / "logo_uppa.png"
+    logo_path = Path(__file__).parent  / "logo_uppa.png"
     if logo_path.exists():
         st.image(str(logo_path), width=width)
 
