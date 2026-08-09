@@ -294,7 +294,12 @@ def init_db():
             ("CAP2", "Gérer son effort sur la durée"),
             ("CAP3", "Améliorer son efficacité de course"),
             ("CAP4", "S’échauffer, récupérer et courir en sécurité"),
-        ],
+        ],"Pelote Basque": [
+    ("PEL1", "Maîtriser les gestes techniques fondamentaux : frappe, contrôle et précision"),
+    ("PEL2", "Se placer et se déplacer efficacement en fonction de la trajectoire de la balle"),
+    ("PEL3", "Construire le point en utilisant les espaces et en adaptant ses choix tactiques"),
+    ("PEL4", "Respecter les règles, son partenaire/adversaire et les consignes de sécurité"),
+],
     }
     for act, comps in defaults.items():
         for code, libelle in comps:
