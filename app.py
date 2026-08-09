@@ -17,7 +17,7 @@ from io import BytesIO
 
 DB = "suaps_presence.db"
 
-ACTIVITES = ["Natation", "Sauvetage", "Surf", "Rugby", "Course à pied"]
+ACTIVITES=["Natation", "Sauvetage", "Surf", "Rugby", "Course à pied", "Pelote Basque"]
 
 def secret_value(name, default=""):
     env = os.getenv(name, "")
