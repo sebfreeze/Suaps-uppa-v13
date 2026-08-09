@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: suaps-uppa
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
