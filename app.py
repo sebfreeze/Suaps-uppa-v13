@@ -782,7 +782,7 @@ st.success("Bienvenue sur l'application mobile SUAPS UPPA 🎓")
 c1, c2 = st.columns(2)
 with c1:
         st.info("🎓 **Étudiants**\n\nOuvrez « Portail étudiant » pour retrouver vos inscriptions, présences, résultats et compétences.")
-    with c2:
+with c2:
         st.info("🧑‍🏫 **Enseignants**\n\nUtilisez le tableau de bord pour gérer les groupes, appels, évaluations, performances et validations.")
 
 elif menu == "Tableau de bord":
