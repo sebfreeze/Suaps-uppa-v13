@@ -777,6 +777,8 @@ if menu == "Accueil":
         )
 
     st.markdown("### Accès rapide")
+st.markdown("### 📱 V14 Mobile — Accueil étudiant")
+st.success("Bienvenue sur l'application mobile SUAPS UPPA 🎓")
     c1, c2 = st.columns(2)
     with c1:
         st.info("🎓 **Étudiants**\n\nOuvrez « Portail étudiant » pour retrouver vos inscriptions, présences, résultats et compétences.")
