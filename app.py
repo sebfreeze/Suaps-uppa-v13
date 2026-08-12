@@ -759,14 +759,14 @@ if menu == "Accueil":
     if promo_path.exists():
         st.image(str(promo_path), use_container_width=True)
 
-    st.markdown("### 5 activités, 5 ambiances")
-    cols = st.columns(5)
+    st.markdown("### 6 activités, 6 ambiances")
+    cols = st.columns(6)
     cards = [
         ("🏊", "Natation", "Technique • Endurance • Performance"),
         ("🛟", "Sauvetage", "Prévenir • Intervenir • Se dépasser"),
         ("🏄", "Surf", "Glisse • Équilibre • Sensations"),
         ("🏉", "Rugby", "Équipe • Engagement • Respect"),
-        ("🏃", "Course à pied", "Endurance • Liberté • Progression"),
+        ("🏃", "Course à pied", "Endurance • Liberté • Progression"),("🥎", "Pelote Basque", "Adresse • Vitesse • Tradition"),
     ]
     for col, (ico, title, desc) in zip(cols, cards):
         col.markdown(
