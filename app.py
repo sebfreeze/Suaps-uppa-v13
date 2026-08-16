@@ -849,7 +849,22 @@ if menu == "Accueil":
   <h3>👋 Bienvenue au SUAPS</h3>
   <p>Choisis ton activité, inscris-toi et suis ta progression sportive directement depuis ton smartphone.</p>
 </div>
+<h3 class="student-section-title">⚡ Accès rapide</h3>
 
+<div class="student-card">
+  <h3>📝 M'inscrire</h3>
+  <p>Choisir mon activité et mon créneau.</p>
+</div>
+
+<div class="student-card">
+  <h3>✅ Ma présence</h3>
+  <p>Valider ma présence à ma séance.</p>
+</div>
+
+<div class="student-card">
+  <h3>📈 Ma progression</h3>
+  <p>Consulter mes performances, notes et compétences.</p>
+</div>
 <h3 class="student-section-title">🔥 Tes activités</h3>
 
 <div class="student-card">
