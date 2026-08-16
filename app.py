@@ -529,6 +529,101 @@ st.markdown("""
     font-weight:600;
   }
 }
+/* --- V14 mobile fun --- */
+.stApp{
+  background:
+    radial-gradient(circle at top right, rgba(24,169,201,.13), transparent 30%),
+    linear-gradient(180deg,#f8fbff 0%,#eef5fb 100%);
+}
+
+.student-hero{
+  position:relative;
+  overflow:hidden;
+  border-radius:26px;
+  padding:26px 22px;
+  box-shadow:0 10px 30px rgba(12,60,120,.20);
+}
+
+.student-hero::after{
+  content:"";
+  position:absolute;
+  width:140px;
+  height:140px;
+  border-radius:50%;
+  background:rgba(255,255,255,.12);
+  right:-35px;
+  top:-45px;
+}
+
+.student-card{
+  border-radius:22px;
+  padding:18px;
+  box-shadow:0 8px 24px rgba(12,60,120,.10);
+  transition:transform .2s ease, box-shadow .2s ease;
+}
+
+.student-card:hover{
+  transform:translateY(-2px);
+  box-shadow:0 12px 28px rgba(12,60,120,.16);
+}
+
+.stButton button{
+  border-radius:16px !important;
+  min-height:52px;
+  font-weight:700 !important;
+  box-shadow:0 5px 14px rgba(12,60,120,.12);
+  transition:all .18s ease;
+}
+
+.stButton button:hover{
+  transform:translateY(-1px);
+}
+
+div[data-baseweb="select"] > div{
+  border-radius:14px;
+}
+
+input{
+  border-radius:14px !important;
+}
+
+[data-testid="stSidebar"]{
+  background:linear-gradient(180deg,#0c3c78 0%,#105b98 100%);
+}
+
+[data-testid="stSidebar"] *{
+  color:white;
+}
+
+[data-testid="stSidebar"] .stRadio label{
+  padding:7px 5px;
+}
+
+h1,h2,h3{
+  letter-spacing:-.02em;
+}
+
+@media (max-width:768px){
+  .block-container{
+    padding-top:.7rem;
+    padding-left:.65rem;
+    padding-right:.65rem;
+  }
+
+  .student-hero{
+    border-radius:22px;
+    padding:22px 18px;
+  }
+
+  .student-card{
+    border-radius:18px;
+  }
+
+  .stButton button{
+    min-height:54px;
+    font-size:1rem;
+  }
+}
 </style>
 """, unsafe_allow_html=True)
 init_db()
