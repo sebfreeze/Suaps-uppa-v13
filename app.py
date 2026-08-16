@@ -836,13 +836,57 @@ else:
     )
 
 if menu == "Accueil":
-    show_uppa_logo(width=360)
-    st.markdown("""
-    <div class="student-hero">
-      <h1>SUAPS UPPA</h1>
-      <p>Bouge ton campus, révèle ton potentiel !</p>
-    </div>
-    """, unsafe_allow_html=True)
+    show_uppa_logo(width=300)
+
+st.markdown("""
+<div class="student-hero">
+  <div style="font-size:2.2rem;">🏆</div>
+  <h1>SUAPS UPPA</h1>
+  <p>Bouge • Progresse • Partage</p>
+</div>
+
+<div class="student-card">
+  <h3>👋 Bienvenue au SUAPS</h3>
+  <p>Choisis ton activité, inscris-toi et suis ta progression sportive directement depuis ton smartphone.</p>
+</div>
+
+<h3 class="student-section-title">🔥 Tes activités</h3>
+
+<div class="student-card">
+  <h3>🏊 Natation & Sauvetage</h3>
+  <span class="student-pill">Technique</span>
+  <span class="student-pill">BNSSA</span>
+  <span class="student-pill">Performance</span>
+</div>
+
+<div class="student-card">
+  <h3>🏉 Rugby</h3>
+  <span class="student-pill">Collectif</span>
+  <span class="student-pill">Jeu</span>
+  <span class="student-pill">Compétences</span>
+</div>
+
+<div class="student-card">
+  <h3>🏃 Course à pied</h3>
+  <span class="student-pill">Endurance</span>
+  <span class="student-pill">Progression</span>
+  <span class="student-pill">Performance</span>
+</div>
+
+<div class="student-card">
+  <h3>🎾 Pelote Basque</h3>
+  <span class="student-pill">Technique</span>
+  <span class="student-pill">Tactique</span>
+  <span class="student-pill">Plaisir</span>
+</div>
+
+<div class="student-card">
+  <h3>🏄 Surf</h3>
+  <span class="student-pill">Océan</span>
+  <span class="student-pill">Sécurité</span>
+  <span class="student-pill">Autonomie</span>
+</div>
+""", unsafe_allow_html=True)
 
     st.markdown("### Le sport, une force pour réussir")
     st.write(
