@@ -838,7 +838,7 @@ else:
 if menu == "Accueil":
     show_uppa_logo(width=300)
 
-st.markdown("""
+    st.markdown("""
 <div class="student-hero">
   <div style="font-size:2.2rem;">🏆</div>
   <h1>SUAPS UPPA</h1>
