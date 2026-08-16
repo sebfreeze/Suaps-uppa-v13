@@ -784,6 +784,8 @@ TEACHER_ACCESS_CODE = secret_value("TEACHER_ACCESS_CODE", "").strip()
 
 if "test_access_ok" not in st.session_state:
     st.session_state.test_access_ok = not bool(TEST_ACCESS_CODE)
+if "quick_page" not in st.session_state:
+    st.session_state.quick_page = None
 if "role" not in st.session_state:
     st.session_state.role = "Étudiant"
 
