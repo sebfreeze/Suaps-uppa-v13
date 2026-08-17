@@ -805,7 +805,47 @@ if not st.session_state.test_access_ok:
         else:
             st.error("Code incorrect.")
     st.stop()
+if st.session_state.quick_page == "inscription":
+    st.subheader("📝 M'inscrire")
 
+    offres = qdf("""
+        SELECT *
+        FROM offres_inscription
+        WHERE ouverte=1
+        ORDER BY activite, intitule
+    """)
+
+    if offres.empty:
+        st.info("Aucune inscription n'est actuellement ouverte.")
+    else:
+        labels = {
+            r["id"]: f'{r["activite"]} — {r["intitule"]}'
+            for _, r in offres.iterrows()
+        }
+
+        oid = st.selectbox(
+            "Choisis ton activité et ton créneau",
+            list(labels.keys()),
+            format_func=lambda x: labels[x]
+        )
+
+        offre = offres[offres.id == oid].iloc[0]
+
+        if offre["jour_horaire"]:
+            st.write(f'🕒 {offre["jour_horaire"]}')
+        if offre["lieu"]:
+            st.write(f'📍 {offre["lieu"]}')
+
+        if st.button("Continuer mon inscription", type="primary", use_container_width=True):
+            st.session_state.quick_page = None
+            st.query_params["inscription"] = offre["token"]
+            st.rerun()
+
+    if st.button("⬅️ Retour à l'accueil"):
+        st.session_state.quick_page = None
+        st.rerun()
+
+    st.stop()
 role_choice = st.sidebar.radio("Mode", ["Étudiant", "Enseignant"], index=0 if st.session_state.role == "Étudiant" else 1)
 if role_choice == "Enseignant" and st.session_state.role != "Enseignant":
     if TEACHER_ACCESS_CODE:
