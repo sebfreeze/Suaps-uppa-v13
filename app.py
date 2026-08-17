@@ -904,7 +904,9 @@ if menu == "Accueil":
   <span class="student-pill">Autonomie</span>
 </div>
 """, unsafe_allow_html=True)
-
+    if st.button("📝 M'inscrire", type="primary", use_container_width=True):
+        st.session_state.quick_page = "inscription"
+        st.rerun()
     st.markdown("### Le sport, une force pour réussir")
     st.write(
         "Une seule application pour découvrir les activités, s’inscrire, valider sa présence, "
