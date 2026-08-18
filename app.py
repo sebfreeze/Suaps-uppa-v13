@@ -910,38 +910,45 @@ if menu == "Accueil":
 <h3 class="student-section-title">🔥 Tes activités</h3>
 
 <div class="student-card">
-  <h3>🏊 Natation & Sauvetage</h3>
-  <span class="student-pill">Technique</span>
-  <span class="student-pill">BNSSA</span>
-  <span class="student-pill">Performance</span>
+  <h3>🏊 Activités aquatiques</h3>
+  <span class="student-pill">Natation</span>
+  <span class="student-pill">Sauvetage</span>
+  <span class="student-pill">Aquagym</span>
 </div>
 
 <div class="student-card">
-  <h3>🏉 Rugby</h3>
-  <span class="student-pill">Collectif</span>
-  <span class="student-pill">Jeu</span>
-  <span class="student-pill">Compétences</span>
+  <h3>🏐 Activités collectives et duelles</h3>
+  <span class="student-pill">Sports collectifs</span>
+  <span class="student-pill">Raquettes</span>
+  <span class="student-pill">Combat</span>
 </div>
 
 <div class="student-card">
-  <h3>🏃 Course à pied</h3>
+  <h3>🏄 Activités physiques de pleine nature</h3>
+  <span class="student-pill">Nature</span>
+  <span class="student-pill">Glisse</span>
+  <span class="student-pill">Aventure</span>
+</div>
+
+<div class="student-card">
+  <h3>💃 Activités dansées et artistiques</h3>
+  <span class="student-pill">Danse</span>
+  <span class="student-pill">Expression</span>
+  <span class="student-pill">Créativité</span>
+</div>
+
+<div class="student-card">
+  <h3>🧘 Activités douces et remise en forme</h3>
+  <span class="student-pill">Bien-être</span>
+  <span class="student-pill">Renforcement</span>
+  <span class="student-pill">Forme</span>
+</div>
+
+<div class="student-card">
+  <h3>🏃 Activités athlétiques</h3>
+  <span class="student-pill">Course</span>
   <span class="student-pill">Endurance</span>
-  <span class="student-pill">Progression</span>
   <span class="student-pill">Performance</span>
-</div>
-
-<div class="student-card">
-  <h3>🎾 Pelote Basque</h3>
-  <span class="student-pill">Technique</span>
-  <span class="student-pill">Tactique</span>
-  <span class="student-pill">Plaisir</span>
-</div>
-
-<div class="student-card">
-  <h3>🏄 Surf</h3>
-  <span class="student-pill">Océan</span>
-  <span class="student-pill">Sécurité</span>
-  <span class="student-pill">Autonomie</span>
 </div>
 """, unsafe_allow_html=True)
     if st.button("📝 M'inscrire", type="primary", use_container_width=True):
