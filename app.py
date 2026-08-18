@@ -966,13 +966,14 @@ if menu == "Accueil":
 
     st.markdown("### 6 familles d’activités, une multitude de pratiques")
     cols = st.columns(6)
-    cards = [
-        ("🏊", "Natation", "Technique • Endurance • Performance"),
-        ("🛟", "Sauvetage", "Prévenir • Intervenir • Se dépasser"),
-        ("🏄", "Surf", "Glisse • Équilibre • Sensations"),
-        ("🏉", "Rugby", "Équipe • Engagement • Respect"),
-        ("🏃", "Course à pied", "Endurance • Liberté • Progression"),("🥎", "Pelote Basque", "Adresse • Vitesse • Tradition"),
-    ]
+            cards = [
+            ("🏊", "Activités aquatiques", "Nager • Sauver • Performer"),
+            ("🏉", "Activités collectives et duelles", "Coopérer • S’opposer • Jouer"),
+            ("🌿", "Activités physiques de pleine nature", "Explorer • Glisser • S’orienter"),
+            ("💃", "Activités danses et artistiques", "Créer • S’exprimer • Bouger"),
+            ("🧘", "Activités douces et remise en forme", "Bien-être • Mobilité • Renforcement"),
+            ("🏃", "Activités athlétiques", "Courir • Sauter • Se dépasser"),
+        ]
     for col, (ico, title, desc) in zip(cols, cards):
         col.markdown(
             f'<div class="student-card" style="min-height:150px;text-align:center;">'
