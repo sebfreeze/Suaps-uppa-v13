@@ -964,7 +964,7 @@ if menu == "Accueil":
     if promo_path.exists():
         st.image(str(promo_path), use_container_width=True)
 
-    st.markdown("### 6 activités, 6 ambiances")
+    st.markdown("### 6 familles d’activités, une multitude de pratiques")
     cols = st.columns(6)
     cards = [
         ("🏊", "Natation", "Technique • Endurance • Performance"),
