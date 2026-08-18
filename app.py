@@ -966,7 +966,7 @@ if menu == "Accueil":
 
     st.markdown("### 6 familles d’activités, une multitude de pratiques")
     cols = st.columns(6)
-            cards = [
+        cards = [
             ("🏊", "Activités aquatiques", "Nager • Sauver • Performer"),
             ("🏉", "Activités collectives et duelles", "Coopérer • S’opposer • Jouer"),
             ("🌿", "Activités physiques de pleine nature", "Explorer • Glisser • S’orienter"),
