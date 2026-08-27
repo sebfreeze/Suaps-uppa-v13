@@ -7,6 +7,15 @@ base = base_path.read_text(encoding="utf-8")
 injection = r"""
 
 # --- V16 : Infos Live / Association sportive / Vie de campus ---
+# Streamlit 1.62 tente de copier les options des selectbox. sqlite3.Row n'est pas sérialisable,
+# on convertit donc toutes les lignes SQL en dictionnaires simples, compatibles partout.
+source = source.replace(
+'''def rows(sql,p=()):
+    c=db(); r=c.execute(sql,p).fetchall(); c.close(); return r''',
+'''def rows(sql,p=()):
+    c=db(); r=c.execute(sql,p).fetchall(); c.close(); return [dict(x) for x in r]'''
+)
+
 source = source.replace(
 '''    CREATE TABLE IF NOT EXISTS baremes(id INTEGER PRIMARY KEY AUTOINCREMENT,activite TEXT NOT NULL,nom TEXT NOT NULL,description TEXT,unite TEXT DEFAULT 'points',valeur_0 REAL DEFAULT 0,valeur_20 REAL DEFAULT 20,actif INTEGER DEFAULT 1);''',
 '''    CREATE TABLE IF NOT EXISTS baremes(id INTEGER PRIMARY KEY AUTOINCREMENT,activite TEXT NOT NULL,nom TEXT NOT NULL,description TEXT,unite TEXT DEFAULT 'points',valeur_0 REAL DEFAULT 0,valeur_20 REAL DEFAULT 20,actif INTEGER DEFAULT 1);
