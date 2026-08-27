@@ -10,6 +10,23 @@ source = source.replace('''def rows(sql,p=()):
     c=db(); r=c.execute(sql,p).fetchall(); c.close(); return r''','''def rows(sql,p=()):
     c=db(); r=c.execute(sql,p).fetchall(); c.close(); return [dict(x) for x in r]''')
 
+# Navigation basse : remplace l'ancien HTML décoratif par de vrais boutons.
+source = source.replace('''def nav():
+    st.markdown('<div class="bottom-nav"><span><b>⌂</b>Accueil</span><span><b>⚡</b>Activités</span><span><b>▣</b>Inscription</span><span><b>↗</b>Résultats</span><span><b>●</b>Profil</span></div>',unsafe_allow_html=True)''','''def nav():
+    st.markdown('<div style="height:8px"></div>',unsafe_allow_html=True)
+    cols=st.columns(5)
+    items=[("⌂ Accueil","Accueil"),("⚡ Activités","Famille"),("▣ Inscription","Inscriptions"),("↗ Résultats","Résultats"),("● Profil","Mon espace")]
+    for col,(label,target) in zip(cols,items):
+        with col:
+            if st.button(label,key=f"bottom_{target}_{st.session_state.page}",use_container_width=True):
+                if target=="Famille" and not st.session_state.family:
+                    st.session_state.family=FAMILLES[0][1]
+                if target in ("Inscriptions","Résultats","Mon espace") and not st.session_state.user_id:
+                    if not st.session_state.profil: st.session_state.profil="Étudiant"
+                    go("Connexion")
+                else:
+                    go(target)''')
+
 # Tables Infos Live + évaluation finale /20.
 source = source.replace("    CREATE TABLE IF NOT EXISTS baremes(id INTEGER PRIMARY KEY AUTOINCREMENT,activite TEXT NOT NULL,nom TEXT NOT NULL,description TEXT,unite TEXT DEFAULT 'points',valeur_0 REAL DEFAULT 0,valeur_20 REAL DEFAULT 20,actif INTEGER DEFAULT 1);","    CREATE TABLE IF NOT EXISTS baremes(id INTEGER PRIMARY KEY AUTOINCREMENT,activite TEXT NOT NULL,nom TEXT NOT NULL,description TEXT,unite TEXT DEFAULT 'points',valeur_0 REAL DEFAULT 0,valeur_20 REAL DEFAULT 20,actif INTEGER DEFAULT 1);\n    CREATE TABLE IF NOT EXISTS actualites(id INTEGER PRIMARY KEY AUTOINCREMENT,categorie TEXT NOT NULL,titre TEXT NOT NULL,contenu TEXT NOT NULL,date_publication TEXT NOT NULL,lien TEXT,actif INTEGER DEFAULT 1);\n    CREATE TABLE IF NOT EXISTS evaluations_finales(id INTEGER PRIMARY KEY AUTOINCREMENT,utilisateur_id INTEGER NOT NULL,activite TEXT NOT NULL,performance REAL DEFAULT 0,competences REAL DEFAULT 0,presences REAL DEFAULT 0,projet REAL DEFAULT 0,total REAL DEFAULT 0,commentaire TEXT,date_evaluation TEXT,UNIQUE(utilisateur_id,activite));")
 
