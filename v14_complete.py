@@ -4,7 +4,7 @@ from pathlib import Path
 base_path = Path(__file__).with_name("v15_base.py")
 base = base_path.read_text(encoding="utf-8")
 
-injection = r'''
+injection = r"""
 # Compatibilité Streamlit : lignes SQL sérialisables.
 source = source.replace('''def rows(sql,p=()):
     c=db(); r=c.execute(sql,p).fetchall(); c.close(); return r''','''def rows(sql,p=()):
@@ -92,7 +92,7 @@ source = source.replace('''            st.caption("Les repères 0/20 et 20/20 so
     if st.button("← Accueil"): go("Accueil")''')
 
 source = source.replace('pages={"Accueil":accueil,"Famille":famille,"Connexion":connexion,"Mon espace":espace,"Inscriptions":inscriptions,"Planning":planning,"Présence":presence,"Résultats":resultats,"Administration":admin}','pages={"Accueil":accueil,"Infos Live":infos_live,"Famille":famille,"Connexion":connexion,"Mon espace":espace,"Inscriptions":inscriptions,"Planning":planning,"Présence":presence,"Résultats":resultats,"Administration":admin}')
-'''
+"""
 
 needle='exec(compile(source, str(source_path), "exec"), globals(), globals())'
 if needle not in base: raise RuntimeError("Point d'injection V15 introuvable")
