@@ -4,7 +4,7 @@ from pathlib import Path
 base_path = Path(__file__).with_name("v15_base.py")
 base = base_path.read_text(encoding="utf-8")
 
-injection = r'''
+injection = r"""
 
 # --- V16 : Infos Live / Association sportive / Vie de campus ---
 source = source.replace(
@@ -13,7 +13,6 @@ source = source.replace(
     CREATE TABLE IF NOT EXISTS actualites(id INTEGER PRIMARY KEY AUTOINCREMENT,categorie TEXT NOT NULL,titre TEXT NOT NULL,contenu TEXT NOT NULL,date_publication TEXT NOT NULL,lien TEXT,actif INTEGER DEFAULT 1);'''
 )
 
-# Ajoute l'accès Infos Live sur l'accueil et une page publique dédiée.
 source = source.replace(
 '''    nav()\n\ndef famille():''',
 '''    st.markdown('<div class="section-title">🔥 Infos Live</div>',unsafe_allow_html=True)
@@ -42,7 +41,6 @@ def infos_live():
 def famille():'''
 )
 
-# Ajoute la rubrique Actualités dans l'administration.
 source = source.replace(
 '    sec=st.radio("Rubrique",["Tableau de bord","Créneaux","Présences","Évaluations","Compétences","Barèmes"],horizontal=True,key="admin_section")',
 '    sec=st.radio("Rubrique",["Tableau de bord","Créneaux","Présences","Évaluations","Compétences","Barèmes","Actualités"],horizontal=True,key="admin_section")'
@@ -93,12 +91,11 @@ source = source.replace(
     if st.button("← Accueil"): go("Accueil")'''
 )
 
-# Enregistre la nouvelle page dans le routeur.
 source = source.replace(
 'pages={"Accueil":accueil,"Famille":famille,"Connexion":connexion,"Mon espace":espace,"Inscriptions":inscriptions,"Planning":planning,"Présence":presence,"Résultats":resultats,"Administration":admin}',
 'pages={"Accueil":accueil,"Infos Live":infos_live,"Famille":famille,"Connexion":connexion,"Mon espace":espace,"Inscriptions":inscriptions,"Planning":planning,"Présence":presence,"Résultats":resultats,"Administration":admin}'
 )
-'''
+"""
 
 needle = 'exec(compile(source, str(source_path), "exec"), globals(), globals())'
 if needle not in base:
