@@ -1,4 +1,28 @@
-"""Charge automatiquement l'identité visuelle SUAPS V14 au démarrage Python."""
+"""Correctifs de démarrage et identité visuelle SUAPS."""
+
+# Correctif de compatibilité pour le code généré par v14_complete.py.
+# Une chaîne SQL triple-quotée peut se retrouver imbriquée dans une autre chaîne
+# triple-quotée lors de l'injection, ce qui provoque un SyntaxError au runtime.
+try:
+    import builtins
+    _original_compile = builtins.compile
+
+    def _suaps_compile(source, filename, mode, *args, **kwargs):
+        if isinstance(source, str) and "export_rows=rows(\"\"\"SELECT u.nom AS 'Nom'" in source:
+            source = source.replace(
+                "export_rows=rows(\"\"\"SELECT u.nom AS 'Nom'",
+                "export_rows=rows(\"SELECT u.nom AS 'Nom'",
+            )
+            source = source.replace(
+                "ORDER BY u.nom,u.prenom\"\"\",(o[\"id\"],))",
+                "ORDER BY u.nom,u.prenom\",(o[\"id\"],))",
+            )
+        return _original_compile(source, filename, mode, *args, **kwargs)
+
+    builtins.compile = _suaps_compile
+except Exception:
+    pass
+
 try:
     import streamlit as st
     _md = st.markdown
