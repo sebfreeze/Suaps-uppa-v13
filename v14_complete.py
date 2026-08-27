@@ -29,6 +29,25 @@ source = source.replace(
 }'''
 )
 
+# Affiche tout le catalogue d'une famille, même sans créneau ouvert.
+source = source.replace(
+'''    if not acts: st.info("Les activités de cette famille seront ajoutées prochainement.")
+    else:
+        offs=rows("SELECT * FROM offres WHERE ouverte=1 ORDER BY activite,intitule")
+        found=[o for o in offs if o["activite"] in acts]
+        for o in found: card(f"{o['activite']} — {o['intitule']}",f"🕒 {o['jour_horaire'] or 'À définir'}  •  📍 {o['lieu'] or 'À définir'}",[o["public"]])''',
+'''    if not acts: st.info("Les activités de cette famille seront ajoutées prochainement.")
+    else:
+        offs=rows("SELECT * FROM offres WHERE ouverte=1 ORDER BY activite,intitule")
+        for act in acts:
+            found=[o for o in offs if o["activite"]==act]
+            if found:
+                for o in found:
+                    card(f"{o['activite']} — {o['intitule']}",f"🕒 {o['jour_horaire'] or 'À définir'}  •  📍 {o['lieu'] or 'À définir'}",[o["public"]])
+            else:
+                card(act,"Créneau à venir",["Activité proposée"] )'''
+)
+
 # --- Table des barèmes ---
 source = source.replace(
 '    CREATE TABLE IF NOT EXISTS acquisitions(id INTEGER PRIMARY KEY AUTOINCREMENT,utilisateur_id INTEGER NOT NULL,competence_id INTEGER NOT NULL,niveau TEXT DEFAULT \'Non évalué\',commentaire TEXT,date_validation TEXT,UNIQUE(utilisateur_id,competence_id));',
