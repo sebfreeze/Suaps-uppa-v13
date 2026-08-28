@@ -1,5 +1,5 @@
 # Module Sports collectifs - équipes, matchs, tournois et photos
-SPORTS_CO = ["Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal"]
+SPORTS_CO = ["Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote basque"]
 
 
 def init_sports_co_db(exe):
@@ -30,16 +30,20 @@ def _round_robin(team_ids):
 
 def render_sports_co(st, rows, one, exe, date):
     st.markdown("### 🏆 Équipes • Matchs • Tournois")
-    sport = st.selectbox("Sport collectif", SPORTS_CO, key="sc_sport")
+    sport = st.selectbox("Sport / activité", SPORTS_CO, key="sc_sport")
+    if sport == "Badminton":
+        st.caption("Simple ou double : crée une équipe pour un joueur ou une paire. Les scores peuvent être saisis en sets/points dans les observations.")
+    elif sport == "Pelote basque":
+        st.caption("Individuel ou paire : crée une équipe par joueur ou par paire selon la spécialité pratiquée.")
     tab = st.radio("Gestion", ["Équipes", "Composer", "Matchs", "Tournois", "Classement", "Feuille de match"], horizontal=True, key="sc_tab")
 
     if tab == "Équipes":
         with st.form("sc_team"):
-            nom = st.text_input("Nom de l'équipe"); couleur = st.text_input("Couleur / chasuble")
-            photo = st.file_uploader("Photo de l'équipe", type=["jpg", "jpeg", "png"], key="sc_team_photo")
-            add = st.form_submit_button("Créer l'équipe", type="primary")
+            nom = st.text_input("Nom de l'équipe / joueur / paire"); couleur = st.text_input("Couleur / chasuble")
+            photo = st.file_uploader("Photo de l'équipe ou du joueur", type=["jpg", "jpeg", "png"], key="sc_team_photo")
+            add = st.form_submit_button("Créer", type="primary")
         if add and nom.strip():
-            exe("INSERT INTO equipes(nom,activite,couleur,date_creation,photo) VALUES(?,?,?,?,?)", (nom.strip(), sport, couleur.strip(), str(date.today()), photo.getvalue() if photo else None)); st.success("Équipe créée."); st.rerun()
+            exe("INSERT INTO equipes(nom,activite,couleur,date_creation,photo) VALUES(?,?,?,?,?)", (nom.strip(), sport, couleur.strip(), str(date.today()), photo.getvalue() if photo else None)); st.success("Création enregistrée."); st.rerun()
         for t in rows("SELECT * FROM equipes WHERE activite=? ORDER BY nom", (sport,)):
             c1, c2 = st.columns([1, 3])
             if t.get("photo"): c1.image(t["photo"], width=100)
@@ -47,16 +51,16 @@ def render_sports_co(st, rows, one, exe, date):
 
     elif tab == "Composer":
         teams = rows("SELECT * FROM equipes WHERE activite=? ORDER BY nom", (sport,))
-        if not teams: st.info("Crée d'abord une équipe."); return
-        team = st.selectbox("Équipe", teams, format_func=lambda r:r["nom"], key="sc_team_pick")
+        if not teams: st.info("Crée d'abord une équipe, un joueur ou une paire."); return
+        team = st.selectbox("Équipe / joueur / paire", teams, format_func=lambda r:r["nom"], key="sc_team_pick")
         students = rows("SELECT * FROM utilisateurs WHERE profil='Étudiant' AND actif=1 ORDER BY nom,prenom")
         current = rows("SELECT ej.*,u.nom,u.prenom FROM equipe_joueurs ej JOIN utilisateurs u ON u.id=ej.utilisateur_id WHERE ej.equipe_id=? ORDER BY ej.titulaire DESC,u.nom", (team["id"],))
         ids = {p["utilisateur_id"] for p in current}; choices = [s for s in students if s["id"] not in ids]
         if choices:
             p = st.selectbox("Joueur", choices, format_func=lambda r:f"{r['nom']} {r['prenom']}")
-            c1, c2 = st.columns(2); num = c1.text_input("Numéro"); poste = c2.text_input("Poste"); tit = st.checkbox("Titulaire", True)
+            c1, c2 = st.columns(2); num = c1.text_input("Numéro"); poste = c2.text_input("Poste / rôle"); tit = st.checkbox("Titulaire", True)
             photo = st.file_uploader("Photo du joueur", type=["jpg", "jpeg", "png"], key="sc_player_photo")
-            if st.button("Ajouter à l'équipe", type="primary"):
+            if st.button("Ajouter", type="primary"):
                 exe("INSERT OR IGNORE INTO equipe_joueurs(equipe_id,utilisateur_id,numero,poste,titulaire,photo) VALUES(?,?,?,?,?,?)", (team["id"], p["id"], num, poste, int(tit), photo.getvalue() if photo else None)); st.rerun()
         for p in current:
             c0, c1, c2 = st.columns([1, 4, 1])
@@ -71,8 +75,8 @@ def render_sports_co(st, rows, one, exe, date):
         ts = rows("SELECT * FROM tournois WHERE activite=? ORDER BY id DESC", (sport,))
         if not ts: st.info("Aucun tournoi."); return
         t = st.selectbox("Tournoi", ts, format_func=lambda r:r["nom"])
-        teams = rows("SELECT * FROM equipes WHERE activite=? ORDER BY nom", (sport,)); selected = st.multiselect("Équipes participantes", teams, format_func=lambda r:r["nom"])
-        if st.button("Enregistrer les équipes"):
+        teams = rows("SELECT * FROM equipes WHERE activite=? ORDER BY nom", (sport,)); selected = st.multiselect("Participants", teams, format_func=lambda r:r["nom"])
+        if st.button("Enregistrer les participants"):
             exe("DELETE FROM tournoi_equipes WHERE tournoi_id=?", (t["id"],))
             for e in selected: exe("INSERT OR IGNORE INTO tournoi_equipes(tournoi_id,equipe_id) VALUES(?,?)", (t["id"], e["id"]))
             st.success("Participants enregistrés."); st.rerun()
@@ -105,7 +109,7 @@ def render_sports_co(st, rows, one, exe, date):
             teams = rows("SELECT * FROM equipes WHERE activite=? ORDER BY nom", (sport,))
             if len(teams) >= 2:
                 with st.form("sc_match"):
-                    a = st.selectbox("Équipe A", teams, format_func=lambda r:r["nom"]); b = st.selectbox("Équipe B", teams, format_func=lambda r:r["nom"], index=1); d = st.date_input("Date", date.today()); h = st.text_input("Heure"); lieu = st.text_input("Lieu"); arb = st.text_input("Arbitre"); add = st.form_submit_button("Créer le match", type="primary")
+                    a = st.selectbox("Participant A", teams, format_func=lambda r:r["nom"]); b = st.selectbox("Participant B", teams, format_func=lambda r:r["nom"], index=1); d = st.date_input("Date", date.today()); h = st.text_input("Heure"); lieu = st.text_input("Lieu"); arb = st.text_input("Arbitre"); add = st.form_submit_button("Créer le match", type="primary")
                 if add and a["id"] != b["id"]: exe("INSERT INTO matchs(activite,equipe_a_id,equipe_b_id,date_match,heure,lieu,arbitre) VALUES(?,?,?,?,?,?,?)", (sport, a["id"], b["id"], str(d), h, lieu, arb)); st.rerun()
             for m in matches: st.write(f"**{m['equipe_a']} {'—' if m['score_a'] is None else str(m['score_a'])+' - '+str(m['score_b'])} {m['equipe_b']}** • {m['date_match']} • {m.get('phase') or ''}")
             return
@@ -121,5 +125,5 @@ def render_sports_co(st, rows, one, exe, date):
                 if photo: st.image(photo, use_container_width=True)
                 for p in rows("SELECT ej.*,u.nom,u.prenom FROM equipe_joueurs ej JOIN utilisateurs u ON u.id=ej.utilisateur_id WHERE ej.equipe_id=? ORDER BY ej.titulaire DESC,u.nom", (tid,)): st.write(f"{'⭐' if p['titulaire'] else '↪'} {p['numero'] or '-'} • {p['nom']} {p['prenom']} • {p['poste'] or '-'}")
         with st.form("sc_score"):
-            c1, c2 = st.columns(2); sa = c1.number_input(f"Score {m['equipe_a']}", 0, value=int(m['score_a'] or 0)); sb = c2.number_input(f"Score {m['equipe_b']}", 0, value=int(m['score_b'] or 0)); statut = st.selectbox("Statut", ["Prévu", "En cours", "Terminé", "Reporté", "Annulé"]); obs = st.text_area("Observations", m["observations"] or ""); save = st.form_submit_button("Enregistrer la feuille de match", type="primary")
+            c1, c2 = st.columns(2); sa = c1.number_input(f"Score {m['equipe_a']}", 0, value=int(m['score_a'] or 0)); sb = c2.number_input(f"Score {m['equipe_b']}", 0, value=int(m['score_b'] or 0)); statut = st.selectbox("Statut", ["Prévu", "En cours", "Terminé", "Reporté", "Annulé"]); obs = st.text_area("Observations / détail des sets", m["observations"] or ""); save = st.form_submit_button("Enregistrer la feuille de match", type="primary")
         if save: exe("UPDATE matchs SET score_a=?,score_b=?,statut=?,observations=? WHERE id=?", (sa, sb, statut, obs, m["id"])); st.success("Feuille enregistrée."); st.rerun()
