@@ -1,6 +1,8 @@
 package fr.univpau.suaps
 
 import android.os.Bundle
+import android.view.View
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
@@ -14,12 +16,23 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         webView = WebView(this)
-
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         webView.webViewClient = WebViewClient()
-        webView.settings.javaScriptEnabled = true
-        webView.settings.domStorageEnabled = true
 
-        webView.loadUrl("https://suaps-uppa-v13.onrender.com")
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            cacheMode = WebSettings.LOAD_DEFAULT
+            loadsImagesAutomatically = true
+            useWideViewPort = true
+            loadWithOverviewMode = true
+        }
+
+        if (savedInstanceState == null) {
+            webView.loadUrl("https://suaps-uppa-v13.onrender.com")
+        } else {
+            webView.restoreState(savedInstanceState)
+        }
 
         setContentView(webView)
 
@@ -35,5 +48,10 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        webView.saveState(outState)
+        super.onSaveInstanceState(outState)
     }
 }
