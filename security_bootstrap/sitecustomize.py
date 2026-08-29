@@ -233,3 +233,11 @@ def _secure_compile(source, filename, mode, *args, **kwargs):
 
 
 builtins.compile = _secure_compile
+
+# Charger explicitement les correctifs complémentaires de migration. Dans les
+# environnements virtuels Render, l'import automatique de usercustomize peut être
+# désactivé, donc on le force ici après l'installation de la couche de sécurité.
+try:
+    import usercustomize as _suaps_usercustomize
+except Exception as exc:
+    print(f"[SUAPS_BOOTSTRAP] usercustomize_error={type(exc).__name__}:{exc}")
