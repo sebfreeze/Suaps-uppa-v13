@@ -127,7 +127,7 @@ def db():
         source = source.replace(old_exe,new_exe,1)
 
     # Les deux moteurs exposent désormais la même exception fonctionnelle.
-    source = source.replace("sqlite3.IntegrityError","DBIntegrityError")
+    source = source.replace("except sqlite3.IntegrityError","except DBIntegrityError")
 
     # Etat de session dédié à l'espace enseignant.
     source = source.replace(
