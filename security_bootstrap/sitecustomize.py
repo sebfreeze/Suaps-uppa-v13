@@ -1,6 +1,7 @@
-"""Couche de sécurité chargée avant Streamlit sur Render.
+"""Couche de sécurité et de persistance chargée avant Streamlit sur Render.
 Charge d'abord les correctifs historiques du projet, puis applique les garde-fous
-sur le code généré de l'application live.
+sur le code généré de l'application live. PostgreSQL est utilisé dès qu'un
+DATABASE_URL est configuré; SQLite reste disponible comme repli réversible.
 """
 from __future__ import annotations
 
@@ -29,13 +30,104 @@ def _secure_generated_app(source):
     if "def admin():" not in source or "Enseignant / Admin" not in source:
         return source
 
-    # Dépendances nécessaires à l'authentification enseignant.
+    # Dépendances nécessaires à la sécurité et au backend PostgreSQL.
     if "import os\nimport secrets" not in source:
         source = source.replace(
             "import streamlit as st",
-            "import streamlit as st\nimport os\nimport secrets",
+            "import streamlit as st\nimport os\nimport re\nimport secrets\ntry:\n    import psycopg\n    from psycopg.rows import dict_row\nexcept Exception:\n    psycopg=None\n    dict_row=None",
             1,
         )
+
+    # Backend compatible SQLite/PostgreSQL. La bascule ne se fait que si
+    # DATABASE_URL est réellement présent sur Render.
+    old_db = '''def db():
+    c=sqlite3.connect(DB,check_same_thread=False,timeout=10)
+    c.row_factory=sqlite3.Row
+    c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA synchronous=NORMAL")
+    return c'''
+    new_db = '''DATABASE_URL=os.getenv("DATABASE_URL","").strip()
+USE_POSTGRES=bool(DATABASE_URL)
+DBIntegrityError=(sqlite3.IntegrityError, psycopg.IntegrityError) if psycopg else sqlite3.IntegrityError
+
+
+def _pg_sql(sql):
+    s=str(sql).strip()
+    ignore=bool(re.match(r"(?is)^INSERT\\s+OR\\s+IGNORE\\s+INTO",s))
+    if ignore:
+        s=re.sub(r"(?is)^INSERT\\s+OR\\s+IGNORE\\s+INTO","INSERT INTO",s,count=1)
+    s=s.replace("INTEGER PRIMARY KEY AUTOINCREMENT","BIGSERIAL PRIMARY KEY")
+    s=re.sub(r"\\bBLOB\\b","BYTEA",s,flags=re.I)
+    s=s.replace("?","%s")
+    if ignore and "ON CONFLICT" not in s.upper():
+        m=re.search(r"(?is)\\s+RETURNING\\s+",s)
+        if m:
+            s=s[:m.start()]+" ON CONFLICT DO NOTHING"+s[m.start():]
+        else:
+            s=s.rstrip().rstrip(";")+" ON CONFLICT DO NOTHING"
+    return s
+
+
+class _PGCursor:
+    def __init__(self,conn):
+        self.conn=conn
+        self.cur=conn.raw.cursor(row_factory=dict_row)
+        self.lastrowid=None
+    def execute(self,sql,p=()):
+        self.cur.execute(_pg_sql(sql),tuple(p or ()))
+        return self
+    def executemany(self,sql,seq):
+        self.cur.executemany(_pg_sql(sql),seq)
+        return self
+    def executescript(self,script):
+        for stmt in str(script).split(";"):
+            if stmt.strip(): self.execute(stmt)
+        return self
+    def fetchone(self): return self.cur.fetchone()
+    def fetchall(self): return self.cur.fetchall()
+
+
+class _PGConnection:
+    def __init__(self):
+        self.raw=psycopg.connect(DATABASE_URL,row_factory=dict_row,connect_timeout=10)
+    def cursor(self): return _PGCursor(self)
+    def execute(self,sql,p=()): return self.cursor().execute(sql,p)
+    def commit(self): self.raw.commit()
+    def rollback(self): self.raw.rollback()
+    def close(self): self.raw.close()
+
+
+def db():
+    if USE_POSTGRES:
+        if psycopg is None: raise RuntimeError("DATABASE_URL configuré mais psycopg indisponible")
+        return _PGConnection()
+    c=sqlite3.connect(DB,check_same_thread=False,timeout=10)
+    c.row_factory=sqlite3.Row
+    c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA synchronous=NORMAL")
+    return c'''
+    if old_db in source and "class _PGConnection" not in source:
+        source = source.replace(old_db, new_db, 1)
+
+    # exe() doit retourner l'id créé aussi sous PostgreSQL.
+    old_exe = '''def exe(sql,p=()):
+    c=db(); q=c.cursor(); q.execute(sql,p); c.commit(); x=q.lastrowid; c.close(); return x'''
+    new_exe = '''def exe(sql,p=()):
+    c=db(); q=c.cursor()
+    if USE_POSTGRES and re.match(r"(?is)^\\s*INSERT\\s+",str(sql)) and "OR IGNORE" not in str(sql).upper() and "RETURNING" not in str(sql).upper():
+        m=re.match(r"(?is)^\\s*INSERT\\s+INTO\\s+([A-Za-z_][A-Za-z0-9_]*)",str(sql))
+        table=m.group(1).lower() if m else ""
+        if table and table not in {"offre_semestres"}:
+            q.execute(str(sql).rstrip().rstrip(";")+" RETURNING id",p)
+            row=q.fetchone(); x=row.get("id") if row else None
+        else:
+            q.execute(sql,p); x=None
+    else:
+        q.execute(sql,p); x=None if USE_POSTGRES else q.lastrowid
+    c.commit(); c.close(); return x'''
+    if old_exe in source:
+        source = source.replace(old_exe,new_exe,1)
+
+    # Les deux moteurs exposent désormais la même exception fonctionnelle.
+    source = source.replace("sqlite3.IntegrityError","DBIntegrityError")
 
     # Etat de session dédié à l'espace enseignant.
     source = source.replace(
