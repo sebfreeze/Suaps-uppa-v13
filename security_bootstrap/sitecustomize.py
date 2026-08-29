@@ -31,15 +31,17 @@ def _secure_generated_app(source):
         return source
 
     # Dépendances nécessaires à la sécurité et au backend PostgreSQL.
-    if "import os\nimport secrets" not in source:
+    if "from psycopg_pool import ConnectionPool" not in source:
         source = source.replace(
             "import streamlit as st",
-            "import streamlit as st\nimport os\nimport re\nimport secrets\ntry:\n    import psycopg\n    from psycopg.rows import dict_row\nexcept Exception:\n    psycopg=None\n    dict_row=None",
+            "import streamlit as st\nimport os\nimport re\nimport secrets\ntry:\n    import psycopg\n    from psycopg.rows import dict_row\n    try:\n        from psycopg_pool import ConnectionPool\n    except Exception:\n        ConnectionPool=None\nexcept Exception:\n    psycopg=None\n    dict_row=None\n    ConnectionPool=None",
             1,
         )
 
     # Backend compatible SQLite/PostgreSQL. La bascule ne se fait que si
-    # DATABASE_URL est réellement présent sur Render.
+    # DATABASE_URL est réellement présent sur Render. En production, les
+    # connexions PostgreSQL sont réutilisées par un pool partagé entre les
+    # sessions Streamlit du processus.
     old_db = '''def db():
     c=sqlite3.connect(DB,check_same_thread=False,timeout=10)
     c.row_factory=sqlite3.Row
@@ -48,6 +50,40 @@ def _secure_generated_app(source):
     new_db = '''DATABASE_URL=os.getenv("DATABASE_URL","").strip()
 USE_POSTGRES=bool(DATABASE_URL)
 DBIntegrityError=(sqlite3.IntegrityError, psycopg.IntegrityError) if psycopg else sqlite3.IntegrityError
+
+
+def _env_int(name,default):
+    try: return int(os.getenv(name,str(default)))
+    except Exception: return int(default)
+
+
+def _env_float(name,default):
+    try: return float(os.getenv(name,str(default)))
+    except Exception: return float(default)
+
+
+DB_POOL_MIN=max(1,_env_int("DB_POOL_MIN",1))
+DB_POOL_MAX=max(DB_POOL_MIN,_env_int("DB_POOL_MAX",12))
+DB_POOL_TIMEOUT=max(1.0,_env_float("DB_POOL_TIMEOUT",15.0))
+
+
+@st.cache_resource(show_spinner=False)
+def _get_pg_pool():
+    if not USE_POSTGRES:
+        return None
+    if psycopg is None or ConnectionPool is None:
+        raise RuntimeError("DATABASE_URL configuré mais psycopg_pool indisponible")
+    return ConnectionPool(
+        conninfo=DATABASE_URL,
+        min_size=DB_POOL_MIN,
+        max_size=DB_POOL_MAX,
+        timeout=DB_POOL_TIMEOUT,
+        max_idle=300,
+        max_lifetime=1800,
+        kwargs={"row_factory":dict_row},
+        open=True,
+        name="suaps-app",
+    )
 
 
 def _pg_sql(sql):
@@ -88,17 +124,28 @@ class _PGCursor:
 
 class _PGConnection:
     def __init__(self):
-        self.raw=psycopg.connect(DATABASE_URL,row_factory=dict_row,connect_timeout=10)
+        self.pool=_get_pg_pool()
+        self.raw=self.pool.getconn(timeout=DB_POOL_TIMEOUT)
     def cursor(self): return _PGCursor(self)
     def execute(self,sql,p=()): return self.cursor().execute(sql,p)
     def commit(self): self.raw.commit()
     def rollback(self): self.raw.rollback()
-    def close(self): self.raw.close()
+    def close(self):
+        raw=self.raw
+        if raw is None: return
+        self.raw=None
+        try:
+            if not raw.closed:
+                try: raw.rollback()
+                except Exception: pass
+        finally:
+            self.pool.putconn(raw)
 
 
 def db():
     if USE_POSTGRES:
-        if psycopg is None: raise RuntimeError("DATABASE_URL configuré mais psycopg indisponible")
+        if psycopg is None or ConnectionPool is None:
+            raise RuntimeError("DATABASE_URL configuré mais le pool PostgreSQL est indisponible")
         return _PGConnection()
     c=sqlite3.connect(DB,check_same_thread=False,timeout=10)
     c.row_factory=sqlite3.Row
@@ -241,3 +288,11 @@ try:
     import usercustomize as _suaps_usercustomize
 except Exception as exc:
     print(f"[SUAPS_BOOTSTRAP] usercustomize_error={type(exc).__name__}:{exc}")
+
+# Couche de montée en charge : inscriptions atomiques et index dédiés aux pics de
+# rentrée. Elle est chargée en dernier afin de rester indépendante des correctifs
+# historiques et des modules pédagogiques/compétition.
+try:
+    import scaling as _suaps_scaling
+except Exception as exc:
+    print(f"[SUAPS_BOOTSTRAP] scaling_error={type(exc).__name__}:{exc}")
