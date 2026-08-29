@@ -18,6 +18,13 @@ def _patch_scaling(source):
     if "def inscriptions():" not in source or "def exe(sql,p=()):" not in source:
         return source
 
+    # Yan-Erick est une seule personne : fusion des deux anciennes entrées.
+    source = source.replace(
+        '    {"nom":"Yann","role":"Admin","avatar":"🧗‍♂️🪨"},\n    {"nom":"Erick","role":"Admin","avatar":"⚽🥅"},',
+        '    {"nom":"Yan-Erick","role":"Admin","avatar":"🧗‍♂️⚽"},',
+        1,
+    )
+
     # Sébastien, Geoffrey et Bernard cumulent les fonctions Enseignant + Admin.
     # Le rôle interne Admin conserve tous les droits enseignant et donne accès
     # aux rubriques réservées, tout en gardant un affichage explicite dans l'UI.
