@@ -18,16 +18,23 @@ def _patch_scaling(source):
     if "def inscriptions():" not in source or "def exe(sql,p=()):" not in source:
         return source
 
-    # Sébastien cumule les deux fonctions. En interne le rôle Admin conserve
-    # tous les droits enseignant, mais l'interface l'affiche explicitement.
+    # Sébastien, Geoffrey et Bernard cumulent les fonctions Enseignant + Admin.
+    # Le rôle interne Admin conserve tous les droits enseignant et donne accès
+    # aux rubriques réservées, tout en gardant un affichage explicite dans l'UI.
+    for _name,_avatar in (("Geoffrey","🏸⚡"),("Bernard","🚴‍♂️😜")):
+        source = source.replace(
+            f'{{"nom":"{_name}","role":"Enseignant","avatar":"{_avatar}"}}',
+            f'{{"nom":"{_name}","role":"Admin","avatar":"{_avatar}"}}',
+            1,
+        )
     source = source.replace(
         "format_func=lambda p:f\"{p['avatar']}  {p['nom']} — {'Administrateur' if p['role']=='Admin' else 'Enseignant'}\"",
-        "format_func=lambda p:f\"{p['avatar']}  {p['nom']} — {'Enseignant + Administrateur' if p['nom']=='Sébastien' else ('Administrateur' if p['role']=='Admin' else 'Enseignant')}\"",
+        "format_func=lambda p:f\"{p['avatar']}  {p['nom']} — {'Enseignant + Administrateur' if p['nom'] in ('Sébastien','Geoffrey','Bernard') else ('Administrateur' if p['role']=='Admin' else 'Enseignant')}\"",
         1,
     )
     source = source.replace(
         '_role_label="Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant"',
-        '_role_label="Enseignant + Administrateur" if st.session_state.get("teacher_name")=="Sébastien" else ("Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant")',
+        '_role_label="Enseignant + Administrateur" if st.session_state.get("teacher_name") in ("Sébastien","Geoffrey","Bernard") else ("Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant")',
         1,
     )
 
