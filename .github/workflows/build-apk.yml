@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'app/**'
+      - 'logo_uppa.png'
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - '.github/workflows/build-apk.yml'
@@ -14,18 +15,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Vérifier et installer le logo UPPA Android
+        run: |
+          test -s logo_uppa.png
+          mkdir -p app/src/main/res/drawable
+          cp logo_uppa.png app/src/main/res/drawable/logo_uppa.png
+          test -s app/src/main/res/drawable/logo_uppa.png
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+
+      - name: Contrôle Android
+        run: gradle :app:lintDebug --stacktrace
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
+
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk SUAPS-UPPA-V14.apk
+
       - uses: actions/upload-artifact@v4
         with:
           name: SUAPS-UPPA-V14-APK
           path: SUAPS-UPPA-V14.apk
+          if-no-files-found: error
