@@ -18,6 +18,19 @@ def _patch_scaling(source):
     if "def inscriptions():" not in source or "def exe(sql,p=()):" not in source:
         return source
 
+    # Sébastien cumule les deux fonctions. En interne le rôle Admin conserve
+    # tous les droits enseignant, mais l'interface l'affiche explicitement.
+    source = source.replace(
+        "format_func=lambda p:f\"{p['avatar']}  {p['nom']} — {'Administrateur' if p['role']=='Admin' else 'Enseignant'}\"",
+        "format_func=lambda p:f\"{p['avatar']}  {p['nom']} — {'Enseignant + Administrateur' if p['nom']=='Sébastien' else ('Administrateur' if p['role']=='Admin' else 'Enseignant')}\"",
+        1,
+    )
+    source = source.replace(
+        '_role_label="Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant"',
+        '_role_label="Enseignant + Administrateur" if st.session_state.get("teacher_name")=="Sébastien" else ("Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant")',
+        1,
+    )
+
     # Helper transactionnel. Sous PostgreSQL, le verrou FOR UPDATE porté sur le
     # créneau sérialise uniquement les inscriptions concurrentes au même créneau.
     # Deux étudiants ne peuvent donc jamais obtenir simultanément la dernière
