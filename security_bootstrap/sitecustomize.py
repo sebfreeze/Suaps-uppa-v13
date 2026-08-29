@@ -176,10 +176,30 @@ def db():
     # Les deux moteurs exposent désormais la même exception fonctionnelle.
     source = source.replace("except sqlite3.IntegrityError","except DBIntegrityError")
 
-    # Etat de session dédié à l'espace enseignant.
+    # Profils nominatifs : un code commun, mais une session identifiée.
+    staff_block = '''STAFF_PROFILES=[
+    {"nom":"Hervé","role":"Enseignant","avatar":"🏉😎"},
+    {"nom":"Luhpo","role":"Enseignant","avatar":"🏊‍♂️🤿"},
+    {"nom":"Raphaël","role":"Enseignant","avatar":"🏄‍♂️🌊"},
+    {"nom":"Dudu","role":"Enseignant","avatar":"🏀😄"},
+    {"nom":"Geoffrey","role":"Enseignant","avatar":"🏸⚡"},
+    {"nom":"Bernard","role":"Enseignant","avatar":"🚴‍♂️😜"},
+    {"nom":"Mathieu","role":"Admin","avatar":"🏋️‍♂️💪"},
+    {"nom":"Michel","role":"Admin","avatar":"⛷️😎"},
+    {"nom":"Stéphanie","role":"Admin","avatar":"💃✨"},
+    {"nom":"Yann","role":"Admin","avatar":"🧗‍♂️🪨"},
+    {"nom":"Erick","role":"Admin","avatar":"⚽🥅"},
+    {"nom":"Patrick","role":"Admin","avatar":"🛶🌊"},
+    {"nom":"Sébastien","role":"Admin","avatar":"🏉🧢"},
+]
+st.session_state.setdefault("admin_auth",False)
+st.session_state.setdefault("teacher_name",None)
+st.session_state.setdefault("teacher_role",None)
+st.session_state.setdefault("teacher_avatar",None)
+def go(p): st.session_state.page=p; st.rerun()'''
     source = source.replace(
         'def go(p): st.session_state.page=p; st.rerun()',
-        'st.session_state.setdefault("admin_auth",False)\ndef go(p): st.session_state.page=p; st.rerun()',
+        staff_block,
         1,
     )
 
@@ -197,22 +217,33 @@ def db():
         1,
     )
 
-    # Connexion enseignant protégée par une variable secrète Render.
+    # Connexion enseignant : code partagé + choix nominatif du profil.
     admin_login = '''def admin_login():
-    topbar(); hero("Accès enseignant","Authentification requise pour accéder aux données et aux outils de gestion.","ESPACE SÉCURISÉ")
-    if st.session_state.get("admin_auth"):
+    topbar(); hero("Accès enseignant","Un code commun, puis un profil nominatif pour savoir qui utilise l'application.","ESPACE SÉCURISÉ")
+    if st.session_state.get("admin_auth") and st.session_state.get("teacher_name"):
         go("Administration")
+    if st.session_state.get("admin_auth") and not st.session_state.get("teacher_name"):
+        st.session_state.admin_auth=False
     _teacher_code=os.getenv("TEACHER_ACCESS_CODE","").strip()
     if not _teacher_code:
         st.error("Accès enseignant temporairement indisponible : code de sécurité non configuré.")
         if st.button("← Accueil",key="admin_login_back"): go("Accueil")
         return
     with st.form("teacher_login_form"):
-        _entered=st.text_input("Code enseignant",type="password",autocomplete="off")
+        _person=st.selectbox(
+            "Qui êtes-vous ?",
+            STAFF_PROFILES,
+            format_func=lambda p:f"{p['avatar']}  {p['nom']} — {'Administrateur' if p['role']=='Admin' else 'Enseignant'}",
+            key="teacher_identity_pick",
+        )
+        _entered=st.text_input("Code enseignant commun",type="password",autocomplete="off")
         _ok=st.form_submit_button("Accéder à l'espace enseignant",type="primary",use_container_width=True)
     if _ok:
         if secrets.compare_digest(_entered.strip(),_teacher_code):
             st.session_state.admin_auth=True
+            st.session_state.teacher_name=_person["nom"]
+            st.session_state.teacher_role=_person["role"]
+            st.session_state.teacher_avatar=_person["avatar"]
             go("Administration")
         else:
             st.error("Code enseignant incorrect.")
@@ -225,14 +256,21 @@ def db():
     # Garde systématique, même si une navigation directe tente d'ouvrir Administration.
     source = source.replace(
         'def admin():\n    topbar(); hero("Enseignant / Administration"',
-        'def admin():\n    if not st.session_state.get("admin_auth"):\n        go("Connexion Admin")\n    topbar(); hero("Enseignant / Administration"',
+        'def admin():\n    if not st.session_state.get("admin_auth") or not st.session_state.get("teacher_name"):\n        go("Connexion Admin")\n    topbar(); hero("Enseignant / Administration"',
         1,
     )
 
-    # Bouton de déconnexion explicite dans l'administration.
+    # Afficher clairement l'identité active et permettre la déconnexion.
     source = source.replace(
         '    sec=st.radio("Rubrique",',
-        '    if st.button("🔒 Se déconnecter enseignant",key="teacher_logout"):\n        st.session_state.admin_auth=False; st.session_state.profil=None; go("Accueil")\n    sec=st.radio("Rubrique",',
+        '    _role_label="Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant"\n    st.success(f"{st.session_state.get(\'teacher_avatar\') or \'🏅\'}  Connecté : {st.session_state.get(\'teacher_name\')} • {_role_label}")\n    if st.button("🔒 Se déconnecter enseignant",key="teacher_logout"):\n        st.session_state.admin_auth=False; st.session_state.teacher_name=None; st.session_state.teacher_role=None; st.session_state.teacher_avatar=None; st.session_state.profil=None; go("Accueil")\n    sec=st.radio("Rubrique",',
+        1,
+    )
+
+    # Sauvegardes et imports globaux restent réservés aux profils Admin.
+    source = source.replace(
+        'horizontal=True,key="admin_section")',
+        'horizontal=True,key="admin_section")\n    if st.session_state.get("teacher_role")!="Admin" and sec in ("Sauvegardes","Semestres & CSV"):\n        st.warning("Cette rubrique est réservée aux administrateurs.")\n        if st.button("← Tableau de bord",key="teacher_admin_only_back"):\n            st.session_state.admin_section="Tableau de bord"; st.rerun()\n        return',
         1,
     )
 
