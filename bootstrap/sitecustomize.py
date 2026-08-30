@@ -6,6 +6,7 @@ ci-dessous sont idempotents pour éviter qu'une évolution d'une couche fasse
 disparaître une rubrique déjà validée.
 '''
 from pathlib import Path
+import builtins
 import importlib.util
 import re
 
@@ -14,6 +15,7 @@ _security_site = _root / "security_bootstrap" / "sitecustomize.py"
 
 _menu_audit_done = False
 _staff_audit_done = False
+_final_audit_done = False
 
 
 def _fix_staff_profiles(source):
@@ -129,12 +131,16 @@ def _ensure_admin_modules(source):
 
     if not _menu_audit_done and 'key="admin_section"' in source:
         _menu_audit_done = True
+        competition_ok = '"Compétition"' in source and 'elif sec=="Compétition":' in source
+        pedagogie_ok = '"Pédagogie"' in source and 'elif sec=="Pédagogie":' in source
+        sauvegardes_ok = '"Sauvegardes"' in source
+        csv_ok = '"Semestres & CSV"' in source
         print(
             "[SUAPS_UI_AUDIT] "
-            f"competition={(chr(34)+'Compétition'+chr(34) in source and 'elif sec==\"Compétition\":' in source)} "
-            f"pedagogie={(chr(34)+'Pédagogie'+chr(34) in source and 'elif sec==\"Pédagogie\":' in source)} "
-            f"sauvegardes={(chr(34)+'Sauvegardes'+chr(34) in source)} "
-            f"csv={(chr(34)+'Semestres & CSV'+chr(34) in source)}"
+            f"competition={competition_ok} "
+            f"pedagogie={pedagogie_ok} "
+            f"sauvegardes={sauvegardes_ok} "
+            f"csv={csv_ok}"
         )
     return source
 
@@ -181,3 +187,77 @@ try:
         _user_mod._previous_compile = _admin_features_bridge
 except Exception as exc:
     print(f"[SUAPS_ORCHESTRATOR] bridge_install_error={type(exc).__name__}")
+
+
+def _install_final_source_guard():
+    '''Place un dernier contrôle juste avant le compile Python natif.'''
+    fn = builtins.compile
+    seen = set()
+
+    for _ in range(24):
+        if not callable(fn) or id(fn) in seen:
+            break
+        seen.add(id(fn))
+        g = getattr(fn, "__globals__", None)
+        if not isinstance(g, dict):
+            break
+
+        leaf = g.get("_original_compile")
+        if callable(leaf):
+            if getattr(leaf, "__name__", "") == "_suaps_final_compile":
+                print("[SUAPS_ORCHESTRATOR] final_guard=already_installed")
+                return True
+
+            def _suaps_final_compile(source, filename, mode, *args, _leaf=leaf, **kwargs):
+                global _final_audit_done
+                try:
+                    if isinstance(source, str) and 'key="admin_section"' in source:
+                        source = _ensure_admin_modules(source)
+                        source = _fix_staff_profiles(source)
+
+                        if not _final_audit_done and "STAFF_PROFILES=[" in source:
+                            competition_ok = '"Compétition"' in source and 'elif sec=="Compétition":' in source
+                            pedagogie_ok = '"Pédagogie"' in source and 'elif sec=="Pédagogie":' in source
+                            sauvegardes_ok = '"Sauvegardes"' in source and 'elif sec=="Sauvegardes":' in source
+                            csv_ok = (
+                                '"Semestres & CSV"' in source
+                                and "### 📥 Import CSV étudiants et inscriptions" in source
+                                and "### 📤 Exports CSV" in source
+                            )
+                            yan_erick_ok = (
+                                '"nom":"Yan-Erick"' in source
+                                and '"nom":"Yann"' not in source
+                                and '"nom":"Erick"' not in source
+                            )
+                            sebastien_dual_ok = (
+                                '"nom":"Sébastien","role":"Admin"' in source
+                                and "Enseignant + Administrateur" in source
+                            )
+                            _final_audit_done = True
+                            print(
+                                "[SUAPS_FINAL_AUDIT] "
+                                f"competition={competition_ok} "
+                                f"pedagogie={pedagogie_ok} "
+                                f"sauvegardes={sauvegardes_ok} "
+                                f"csv={csv_ok} "
+                                f"yan_erick={yan_erick_ok} "
+                                f"sebastien_dual={sebastien_dual_ok}"
+                            )
+                except Exception as exc:
+                    print(f"[SUAPS_ORCHESTRATOR] final_guard_error={type(exc).__name__}")
+                return _leaf(source, filename, mode, *args, **kwargs)
+
+            g["_original_compile"] = _suaps_final_compile
+            print("[SUAPS_ORCHESTRATOR] final_guard=installed")
+            return True
+
+        nxt = g.get("_previous_compile")
+        if not callable(nxt) or nxt is fn:
+            break
+        fn = nxt
+
+    print("[SUAPS_ORCHESTRATOR] final_guard=not_found")
+    return False
+
+
+_install_final_source_guard()
