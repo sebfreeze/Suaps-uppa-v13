@@ -36,11 +36,14 @@ def _round_robin(team_ids):
 
 def render_sports_co(st, rows, one, exe, date):
     st.markdown("### 🏆 Équipes • Matchs • Tournois")
+    st.caption("Rugby • Basket-ball • Handball • Volley-ball • Football • Futsal • Badminton • Pelote Basque")
     sport = st.selectbox("Sport / activité", SPORTS_CO, key="sc_sport")
+    individuel = sport in ("Badminton", "Pelote Basque")
+    participant_label = "joueur / paire" if individuel else "équipe"
     if sport == "Badminton":
-        st.caption("Simple ou double : crée une équipe pour un joueur ou une paire. Les scores peuvent être saisis en sets/points dans les observations.")
+        st.info("🏸 Badminton : matchs et tournois en simple ou en double. Un participant peut être un joueur ou une paire.")
     elif sport == "Pelote Basque":
-        st.caption("Individuel ou paire : crée une équipe par joueur ou par paire selon la spécialité pratiquée.")
+        st.info("🥎 Pelote Basque : matchs et tournois en individuel ou par paire selon la spécialité.")
     tab = st.radio("Gestion", ["Équipes", "Composer", "Matchs", "Tournois", "Classement", "Feuille de match"], horizontal=True, key="sc_tab")
 
     if tab == "Équipes":
@@ -90,6 +93,16 @@ def render_sports_co(st, rows, one, exe, date):
                 st.rerun()
 
     elif tab == "Tournois":
+        if individuel:
+            st.markdown(f"#### ➕ Ajouter rapidement un {participant_label}")
+            with st.form(f"sc_quick_tournament_participant_{sport}"):
+                qnom = st.text_input("Nom du joueur ou de la paire", key=f"sc_qt_name_{sport}")
+                qadd = st.form_submit_button("Ajouter le participant")
+            if qadd and qnom.strip():
+                exe("INSERT INTO equipes(nom,activite,date_creation) VALUES(?,?,?)", (qnom.strip(), sport, str(date.today())))
+                st.success(f"{qnom.strip()} ajouté à {sport}.")
+                st.rerun()
+
         with st.form("sc_tournament"):
             nom = st.text_input("Nom du tournoi")
             formule = st.selectbox("Formule", ["Championnat / toutes rondes", "Poules", "Élimination directe"])
@@ -98,13 +111,16 @@ def render_sports_co(st, rows, one, exe, date):
             create = st.form_submit_button("Créer le tournoi", type="primary")
         if create and nom.strip():
             exe("INSERT INTO tournois(nom,activite,formule,date_tournoi,lieu) VALUES(?,?,?,?,?)", (nom.strip(), sport, formule, str(d), lieu))
+            st.success(f"Tournoi {sport} créé.")
             st.rerun()
         ts = rows("SELECT * FROM tournois WHERE activite=? ORDER BY id DESC", (sport,))
         if not ts:
-            st.info("Aucun tournoi.")
+            st.info(f"Aucun tournoi {sport} pour le moment.")
             return
         t = st.selectbox("Tournoi", ts, format_func=lambda r: r["nom"])
         teams = rows("SELECT * FROM equipes WHERE activite=? ORDER BY nom", (sport,))
+        if len(teams) < 2:
+            st.warning(f"Ajoute au moins 2 {participant_label}s pour générer des rencontres.")
         selected = st.multiselect("Participants", teams, format_func=lambda r: r["nom"])
         if st.button("Enregistrer les participants"):
             exe("DELETE FROM tournoi_equipes WHERE tournoi_id=?", (t["id"],))
@@ -119,7 +135,7 @@ def render_sports_co(st, rows, one, exe, date):
             games = _round_robin(ids) if t["formule"] != "Élimination directe" else [(ids[i], ids[i + 1], "1er tour") for i in range(0, len(ids) - 1, 2)]
             for a, b, phase in games:
                 exe("INSERT INTO matchs(activite,equipe_a_id,equipe_b_id,tournoi_id,phase,date_match,lieu) VALUES(?,?,?,?,?,?,?)", (sport, a, b, t["id"], phase, t["date_tournoi"], t["lieu"]))
-            st.success(f"{len(games)} rencontre(s) générée(s).")
+            st.success(f"{len(games)} rencontre(s) {sport} générée(s).")
             st.rerun()
 
     elif tab == "Classement":
@@ -162,6 +178,15 @@ def render_sports_co(st, rows, one, exe, date):
         matches = rows("SELECT m.*,a.nom equipe_a,b.nom equipe_b FROM matchs m JOIN equipes a ON a.id=m.equipe_a_id JOIN equipes b ON b.id=m.equipe_b_id WHERE m.activite=? ORDER BY m.date_match DESC,m.id DESC", (sport,))
         if tab == "Matchs":
             teams = rows("SELECT * FROM equipes WHERE activite=? ORDER BY nom", (sport,))
+            if individuel:
+                st.markdown(f"#### ➕ Ajouter rapidement un {participant_label}")
+                with st.form(f"sc_quick_match_participant_{sport}"):
+                    qnom = st.text_input("Nom du joueur ou de la paire", key=f"sc_qm_name_{sport}")
+                    qadd = st.form_submit_button("Ajouter le participant")
+                if qadd and qnom.strip():
+                    exe("INSERT INTO equipes(nom,activite,date_creation) VALUES(?,?,?)", (qnom.strip(), sport, str(date.today())))
+                    st.success(f"{qnom.strip()} ajouté à {sport}.")
+                    st.rerun()
             if len(teams) >= 2:
                 with st.form("sc_match"):
                     a = st.selectbox("Participant A", teams, format_func=lambda r: r["nom"])
@@ -170,10 +195,13 @@ def render_sports_co(st, rows, one, exe, date):
                     h = st.text_input("Heure")
                     lieu = st.text_input("Lieu")
                     arb = st.text_input("Arbitre")
-                    add = st.form_submit_button("Créer le match", type="primary")
+                    add = st.form_submit_button(f"Créer le match {sport}", type="primary")
                 if add and a["id"] != b["id"]:
                     exe("INSERT INTO matchs(activite,equipe_a_id,equipe_b_id,date_match,heure,lieu,arbitre) VALUES(?,?,?,?,?,?,?)", (sport, a["id"], b["id"], str(d), h, lieu, arb))
+                    st.success(f"Match {sport} créé.")
                     st.rerun()
+            else:
+                st.warning(f"Il faut au moins 2 {participant_label}s pour créer un match {sport}.")
             for m in matches:
                 st.write(f"**{m['equipe_a']} {'—' if m['score_a'] is None else str(m['score_a']) + ' - ' + str(m['score_b'])} {m['equipe_b']}** • {m['date_match']} • {m.get('phase') or ''}")
             return
