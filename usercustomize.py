@@ -1,4 +1,4 @@
-"""Ajoute les modules Compétition et Pédagogie à l'application générée."""
+"""Ajoute les modules Compétition, Pédagogie et présence manuelle à l'application générée."""
 import builtins
 
 _previous_compile = builtins.compile
@@ -10,7 +10,7 @@ def _inject_modules(source):
     if 'def admin()' not in source or 'key="admin_section"' not in source:
         return source
 
-    # Compétition : sports collectifs + badminton + pelote basque.
+    # Compétition : sports collectifs + badminton + Pelote Basque.
     if '"Compétition"' not in source:
         if '"Sports collectifs"' in source:
             source = source.replace('"Sports collectifs"', '"Compétition"')
@@ -25,7 +25,7 @@ def _inject_modules(source):
     if anchor in source and 'elif sec=="Compétition":' not in source:
         competition = '''    elif sec=="Compétition":
         st.markdown("## 🏆 Compétition")
-        st.caption("Sports collectifs • Badminton • Pelote basque")
+        st.caption("Sports collectifs • Badminton • Pelote Basque")
         st.info("Équipes / joueurs • Composer • Matchs • Feuilles de match • Tournois • Classements")
         from sports_co_module import init_sports_co_db, render_sports_co
         init_sports_co_db(exe)
@@ -57,6 +57,40 @@ def _inject_modules(source):
     elif sec=="Compétences":
 '''
         source = source.replace(anchor, pedagogie, 1)
+
+    # Présences : appel manuel rapide, adapté au smartphone de l'enseignant.
+    # Il complète QR/NFC sans supprimer les validations déjà enregistrées.
+    if 'key="manual_presence_pick"' not in source:
+        old_presence = '''            if ok: exe("UPDATE seances SET qr_ouvert=0 WHERE offre_id=?",(oid,)); exe("INSERT INTO seances(offre_id,date_seance,theme,qr_token,qr_ouvert) VALUES(?,?,?,?,1)",(oid,str(d),theme,tok)); st.success(f"Code : {tok}"); st.rerun()
+    elif sec=="Évaluations":'''
+        new_presence = '''            if ok: exe("UPDATE seances SET qr_ouvert=0 WHERE offre_id=?",(oid,)); exe("INSERT INTO seances(offre_id,date_seance,theme,qr_token,qr_ouvert) VALUES(?,?,?,?,1)",(oid,str(d),theme,tok)); st.success(f"Code : {tok}"); st.rerun()
+            _sessions=rows("SELECT * FROM seances WHERE offre_id=? ORDER BY date_seance DESC,id DESC",(oid,))
+            if _sessions:
+                st.markdown("### ✅ Appel manuel sur smartphone")
+                _sess=st.selectbox("Séance à gérer",_sessions,format_func=lambda r:f"{r['date_seance']} — {r['theme'] or 'Séance'} — {r['qr_token'] or 'sans code'}",key="manual_presence_pick")
+                _regs=rows("SELECT u.id,u.nom,u.prenom,p.statut FROM inscriptions i JOIN utilisateurs u ON u.id=i.utilisateur_id LEFT JOIN presences p ON p.utilisateur_id=u.id AND p.seance_id=? WHERE i.offre_id=? AND i.statut='Inscrit' AND u.actif=1 ORDER BY u.nom,u.prenom",(_sess["id"],oid))
+                if not _regs:
+                    st.info("Aucun inscrit sur ce créneau.")
+                else:
+                    _reg_by_id={r["id"]:r for r in _regs}
+                    _present_default=[r["id"] for r in _regs if r.get("statut")=="Présent"]
+                    _selected=st.multiselect("Étudiants présents",list(_reg_by_id),default=_present_default,format_func=lambda uid:f"{_reg_by_id[uid]['nom']} {_reg_by_id[uid]['prenom']}",key=f"manual_present_{_sess['id']}")
+                    st.caption(f"{len(_selected)} présent(s) sur {len(_regs)} inscrit(s). Décoche un nom pour le noter absent.")
+                    if st.button("💾 Enregistrer l'appel",type="primary",key=f"save_manual_presence_{_sess['id']}"):
+                        _selected_set=set(_selected)
+                        for _uid in _reg_by_id:
+                            _status="Présent" if _uid in _selected_set else "Absent"
+                            _old=one("SELECT id FROM presences WHERE seance_id=? AND utilisateur_id=?",(_sess["id"],_uid))
+                            if _old:
+                                exe("UPDATE presences SET statut=?,mode_validation='Manuel' WHERE id=?",(_status,_old["id"]))
+                            else:
+                                exe("INSERT INTO presences(seance_id,utilisateur_id,statut,mode_validation) VALUES(?,?,?,'Manuel')",(_sess["id"],_uid,_status))
+                        st.success("Appel enregistré.")
+                        st.rerun()
+    elif sec=="Évaluations":'''
+        if old_presence in source:
+            source = source.replace(old_presence, new_presence, 1)
+
     return source
 
 
