@@ -8,32 +8,32 @@ from __future__ import annotations
 
 import builtins
 import os
+import sys
 
 _previous_compile = builtins.compile
 
 
-def _patch_scaling(source):
+def _patch_staff_profiles(source):
+    """Applique les profils définitifs après l'injection sécurité."""
     if not isinstance(source, str):
         return source
-    if "def inscriptions():" not in source or "def exe(sql,p=()):" not in source:
-        return source
 
-    # Yan-Erick est une seule personne : fusion des deux anciennes entrées.
+    # Yann + Erick = une seule personne : Yan-Erick.
     source = source.replace(
         '    {"nom":"Yann","role":"Admin","avatar":"🧗‍♂️🪨"},\n    {"nom":"Erick","role":"Admin","avatar":"⚽🥅"},',
         '    {"nom":"Yan-Erick","role":"Admin","avatar":"🧗‍♂️⚽"},',
         1,
     )
 
-    # Sébastien, Geoffrey et Bernard cumulent les fonctions Enseignant + Admin.
-    # Le rôle interne Admin conserve tous les droits enseignant et donne accès
-    # aux rubriques réservées, tout en gardant un affichage explicite dans l'UI.
+    # Geoffrey et Bernard gardent les droits Admin prévus précédemment.
     for _name,_avatar in (("Geoffrey","🏸⚡"),("Bernard","🚴‍♂️😜")):
         source = source.replace(
             f'{{"nom":"{_name}","role":"Enseignant","avatar":"{_avatar}"}}',
             f'{{"nom":"{_name}","role":"Admin","avatar":"{_avatar}"}}',
             1,
         )
+
+    # Sébastien (ainsi que Geoffrey et Bernard) est enseignant ET administrateur.
     source = source.replace(
         "format_func=lambda p:f\"{p['avatar']}  {p['nom']} — {'Administrateur' if p['role']=='Admin' else 'Enseignant'}\"",
         "format_func=lambda p:f\"{p['avatar']}  {p['nom']} — {'Enseignant + Administrateur' if p['nom'] in ('Sébastien','Geoffrey','Bernard') else ('Administrateur' if p['role']=='Admin' else 'Enseignant')}\"",
@@ -44,6 +44,17 @@ def _patch_scaling(source):
         '_role_label="Enseignant + Administrateur" if st.session_state.get("teacher_name") in ("Sébastien","Geoffrey","Bernard") else ("Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant")',
         1,
     )
+    return source
+
+
+def _patch_scaling(source):
+    if not isinstance(source, str):
+        return source
+    if "def inscriptions():" not in source or "def exe(sql,p=()):" not in source:
+        return source
+
+    # Ce passage reste utile si les profils sont déjà présents dans la source.
+    source = _patch_staff_profiles(source)
 
     # Helper transactionnel. Sous PostgreSQL, le verrou FOR UPDATE porté sur le
     # créneau sérialise uniquement les inscriptions concurrentes au même créneau.
@@ -135,6 +146,19 @@ def _suaps_atomic_register(utilisateur,offre_id,modalite):
         source = source.replace(old_click, new_click, 1)
 
     return source
+
+
+# Le bloc STAFF_PROFILES est injecté par security_bootstrap/sitecustomize.py.
+# scaling.py est chargé ensuite : on enveloppe donc le transformeur de sécurité
+# pour appliquer nos corrections APRES cette injection, ce qui les rend effectives.
+_bootstrap = sys.modules.get("sitecustomize")
+if _bootstrap is not None and hasattr(_bootstrap, "_secure_generated_app"):
+    _previous_secure_generated_app = _bootstrap._secure_generated_app
+
+    def _secure_generated_app_with_staff(source):
+        return _patch_staff_profiles(_previous_secure_generated_app(source))
+
+    _bootstrap._secure_generated_app = _secure_generated_app_with_staff
 
 
 def _compile(source, filename, mode, *args, **kwargs):
