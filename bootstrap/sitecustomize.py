@@ -189,6 +189,49 @@ except Exception as exc:
     print(f"[SUAPS_ORCHESTRATOR] bridge_install_error={type(exc).__name__}")
 
 
+def _install_staff_source_hook():
+    '''Retrouve la vraie couche sécurité dans la chaîne compile et la corrige.'''
+    fn = builtins.compile
+    seen = set()
+
+    for _ in range(32):
+        if not callable(fn) or id(fn) in seen:
+            break
+        seen.add(id(fn))
+        g = getattr(fn, "__globals__", None)
+        if not isinstance(g, dict):
+            break
+
+        secure = g.get("_secure_generated_app")
+        if callable(secure):
+            if getattr(secure, "__name__", "") == "_secure_generated_app_with_final_staff":
+                print("[SUAPS_ORCHESTRATOR] staff_guard=already_installed")
+                return True
+
+            def _secure_generated_app_with_final_staff(source, _secure=secure):
+                return _fix_staff_profiles(_secure(source))
+
+            g["_secure_generated_app"] = _secure_generated_app_with_final_staff
+            print("[SUAPS_ORCHESTRATOR] staff_guard=installed")
+            return True
+
+        nxt = None
+        for key in ("_previous_compile", "_next_compile"):
+            candidate = g.get(key)
+            if callable(candidate) and candidate is not fn:
+                nxt = candidate
+                break
+        if nxt is None:
+            break
+        fn = nxt
+
+    print("[SUAPS_ORCHESTRATOR] staff_guard=not_found")
+    return False
+
+
+_install_staff_source_hook()
+
+
 def _install_final_source_guard():
     '''Place un dernier contrôle juste avant le compile Python natif.'''
     fn = builtins.compile
