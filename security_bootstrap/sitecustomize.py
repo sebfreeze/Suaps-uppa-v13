@@ -88,14 +88,17 @@ def _get_pg_pool():
 
 def _pg_sql(sql):
     s=str(sql).strip()
-    ignore=bool(re.match(r"(?is)^INSERT\\s+OR\\s+IGNORE\\s+INTO",s))
+    # SQLite accepte les alias entre apostrophes, PostgreSQL non : normaliser
+    # les alias d'affichage CSV en identifiants SQL entre guillemets doubles.
+    s=re.sub(r"(?i)\bAS\s+'([^']+)'",lambda m:'AS "'+m.group(1)+'"',s)
+    ignore=bool(re.match(r"(?is)^INSERT\s+OR\s+IGNORE\s+INTO",s))
     if ignore:
-        s=re.sub(r"(?is)^INSERT\\s+OR\\s+IGNORE\\s+INTO","INSERT INTO",s,count=1)
+        s=re.sub(r"(?is)^INSERT\s+OR\s+IGNORE\s+INTO","INSERT INTO",s,count=1)
     s=s.replace("INTEGER PRIMARY KEY AUTOINCREMENT","BIGSERIAL PRIMARY KEY")
-    s=re.sub(r"\\bBLOB\\b","BYTEA",s,flags=re.I)
+    s=re.sub(r"\bBLOB\b","BYTEA",s,flags=re.I)
     s=s.replace("?","%s")
     if ignore and "ON CONFLICT" not in s.upper():
-        m=re.search(r"(?is)\\s+RETURNING\\s+",s)
+        m=re.search(r"(?is)\s+RETURNING\s+",s)
         if m:
             s=s[:m.start()]+" ON CONFLICT DO NOTHING"+s[m.start():]
         else:
@@ -159,8 +162,8 @@ def db():
     c=db(); q=c.cursor(); q.execute(sql,p); c.commit(); x=q.lastrowid; c.close(); return x'''
     new_exe = '''def exe(sql,p=()):
     c=db(); q=c.cursor()
-    if USE_POSTGRES and re.match(r"(?is)^\\s*INSERT\\s+",str(sql)) and "OR IGNORE" not in str(sql).upper() and "RETURNING" not in str(sql).upper():
-        m=re.match(r"(?is)^\\s*INSERT\\s+INTO\\s+([A-Za-z_][A-Za-z0-9_]*)",str(sql))
+    if USE_POSTGRES and re.match(r"(?is)^\s*INSERT\s+",str(sql)) and "OR IGNORE" not in str(sql).upper() and "RETURNING" not in str(sql).upper():
+        m=re.match(r"(?is)^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)",str(sql))
         table=m.group(1).lower() if m else ""
         if table and table not in {"offre_semestres"}:
             q.execute(str(sql).rstrip().rstrip(";")+" RETURNING id",p)
