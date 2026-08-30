@@ -88,8 +88,7 @@ def _get_pg_pool():
 
 def _pg_sql(sql):
     s=str(sql).strip()
-    # SQLite accepte les alias entre apostrophes, PostgreSQL non. On évite ici
-    # tout échappement ambigu dans la chaîne de code généré.
+    # SQLite accepte les alias entre apostrophes, PostgreSQL non.
     s=re.sub(r"(?i)AS[ ]+'([^']+)'",lambda m:'AS "'+m.group(1).replace('"','""')+'"',s)
     ignore=bool(re.match(r"(?is)^INSERT\s+OR\s+IGNORE\s+INTO",s))
     if ignore:
@@ -157,41 +156,70 @@ def db():
     if old_db in source and "class _PGConnection" not in source:
         source = source.replace(old_db, new_db, 1)
 
-    # exe() doit retourner l'id créé aussi sous PostgreSQL.
+    # rows() doit toujours rendre la connexion au pool, même en cas d'erreur SQL.
+    safe_rows = '''def rows(sql,p=()):
+    c=db()
+    try:
+        r=c.execute(sql,p).fetchall()
+        return [dict(x) for x in r]
+    finally:
+        c.close()'''
+    for old_rows in (
+        '''def rows(sql,p=()):
+    c=db(); r=c.execute(sql,p).fetchall(); c.close(); return r''',
+        '''def rows(sql,p=()):
+    c=db(); r=c.execute(sql,p).fetchall(); c.close(); return [dict(x) for x in r]''',
+    ):
+        if old_rows in source:
+            source = source.replace(old_rows, safe_rows, 1)
+            break
+
+    # exe() retourne l'id créé sous PostgreSQL et rend systématiquement la
+    # connexion au pool, y compris lorsqu'une requête échoue.
     old_exe = '''def exe(sql,p=()):
     c=db(); q=c.cursor(); q.execute(sql,p); c.commit(); x=q.lastrowid; c.close(); return x'''
     new_exe = '''def exe(sql,p=()):
-    c=db(); q=c.cursor()
-    if USE_POSTGRES and re.match(r"(?is)^\s*INSERT\s+",str(sql)) and "OR IGNORE" not in str(sql).upper() and "RETURNING" not in str(sql).upper():
-        m=re.match(r"(?is)^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)",str(sql))
-        table=m.group(1).lower() if m else ""
-        if table and table not in {"offre_semestres"}:
-            q.execute(str(sql).rstrip().rstrip(";")+" RETURNING id",p)
-            row=q.fetchone(); x=row.get("id") if row else None
+    c=db()
+    try:
+        q=c.cursor()
+        if USE_POSTGRES and re.match(r"(?is)^\s*INSERT\s+",str(sql)) and "OR IGNORE" not in str(sql).upper() and "RETURNING" not in str(sql).upper():
+            m=re.match(r"(?is)^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)",str(sql))
+            table=m.group(1).lower() if m else ""
+            if table and table not in {"offre_semestres"}:
+                q.execute(str(sql).rstrip().rstrip(";")+" RETURNING id",p)
+                row=q.fetchone(); x=row.get("id") if row else None
+            else:
+                q.execute(sql,p); x=None
         else:
-            q.execute(sql,p); x=None
-    else:
-        q.execute(sql,p); x=None if USE_POSTGRES else q.lastrowid
-    c.commit(); c.close(); return x'''
+            q.execute(sql,p); x=None if USE_POSTGRES else q.lastrowid
+        c.commit()
+        return x
+    except Exception:
+        try: c.rollback()
+        except Exception: pass
+        raise
+    finally:
+        c.close()'''
     if old_exe in source:
         source = source.replace(old_exe,new_exe,1)
 
     # Les deux moteurs exposent désormais la même exception fonctionnelle.
     source = source.replace("except sqlite3.IntegrityError","except DBIntegrityError")
 
-    # Profils nominatifs : un code commun, mais une session identifiée.
+    # Profils définitifs : source unique afin d'éviter les régressions entre
+    # correctifs successifs. Les profils doubles conservent role=Admin pour les
+    # fonctions réservées tout en étant affichés Enseignant + Administrateur.
     staff_block = '''STAFF_PROFILES=[
     {"nom":"Hervé","role":"Enseignant","avatar":"🏉😎"},
     {"nom":"Luhpo","role":"Enseignant","avatar":"🏊‍♂️🤿"},
     {"nom":"Raphaël","role":"Enseignant","avatar":"🏄‍♂️🌊"},
     {"nom":"Dudu","role":"Enseignant","avatar":"🏀😄"},
-    {"nom":"Geoffrey","role":"Enseignant","avatar":"🏸⚡"},
-    {"nom":"Bernard","role":"Enseignant","avatar":"🚴‍♂️😜"},
+    {"nom":"Geoffrey","role":"Admin","avatar":"🏸⚡"},
+    {"nom":"Bernard","role":"Admin","avatar":"🚴‍♂️😜"},
     {"nom":"Mathieu","role":"Admin","avatar":"🏋️‍♂️💪"},
     {"nom":"Michel","role":"Admin","avatar":"⛷️😎"},
     {"nom":"Stéphanie","role":"Admin","avatar":"💃✨"},
-    {"nom":"Yann","role":"Admin","avatar":"🧗‍♂️🪨"},
-    {"nom":"Erick","role":"Admin","avatar":"⚽🥅"},
+    {"nom":"Yan-Erick","role":"Admin","avatar":"🧗‍♂️⚽"},
     {"nom":"Patrick","role":"Admin","avatar":"🛶🌊"},
     {"nom":"Sébastien","role":"Admin","avatar":"🏉🧢"},
 ]
@@ -236,7 +264,7 @@ def go(p): st.session_state.page=p; st.rerun()'''
         _person=st.selectbox(
             "Qui êtes-vous ?",
             STAFF_PROFILES,
-            format_func=lambda p:f"{p['avatar']}  {p['nom']} — {'Administrateur' if p['role']=='Admin' else 'Enseignant'}",
+            format_func=lambda p:f"{p['avatar']}  {p['nom']} — {'Enseignant + Administrateur' if p['nom'] in ('Sébastien','Geoffrey','Bernard') else ('Administrateur' if p['role']=='Admin' else 'Enseignant')}",
             key="teacher_identity_pick",
         )
         _entered=st.text_input("Code enseignant commun",type="password",autocomplete="off")
@@ -266,7 +294,7 @@ def go(p): st.session_state.page=p; st.rerun()'''
     # Afficher clairement l'identité active et permettre la déconnexion.
     source = source.replace(
         '    sec=st.radio("Rubrique",',
-        '    _role_label="Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant"\n    st.success(f"{st.session_state.get(\'teacher_avatar\') or \'🏅\'}  Connecté : {st.session_state.get(\'teacher_name\')} • {_role_label}")\n    if st.button("🔒 Se déconnecter enseignant",key="teacher_logout"):\n        st.session_state.admin_auth=False; st.session_state.teacher_name=None; st.session_state.teacher_role=None; st.session_state.teacher_avatar=None; st.session_state.profil=None; go("Accueil")\n    sec=st.radio("Rubrique",',
+        '    _role_label="Enseignant + Administrateur" if st.session_state.get("teacher_name") in ("Sébastien","Geoffrey","Bernard") else ("Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant")\n    st.success(f"{st.session_state.get(\'teacher_avatar\') or \'🏅\'}  Connecté : {st.session_state.get(\'teacher_name\')} • {_role_label}")\n    if st.button("🔒 Se déconnecter enseignant",key="teacher_logout"):\n        st.session_state.admin_auth=False; st.session_state.teacher_name=None; st.session_state.teacher_role=None; st.session_state.teacher_avatar=None; st.session_state.profil=None; go("Accueil")\n    sec=st.radio("Rubrique",',
         1,
     )
 
