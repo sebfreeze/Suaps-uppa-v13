@@ -1,4 +1,4 @@
-"""Ajoute les modules Compétition, Pédagogie et présence manuelle à l'application générée."""
+"""Ajoute les modules Compétition, Pédagogie, présence manuelle et accès étudiant à l'application générée."""
 import builtins
 
 _previous_compile = builtins.compile
@@ -9,6 +9,36 @@ def _inject_modules(source):
         return source
     if 'def admin()' not in source or 'key="admin_section"' not in source:
         return source
+
+    # Code d'accès étudiant : requis uniquement lors de la création d'un nouveau profil.
+    # La valeur est lue côté serveur depuis STUDENT_ACCESS_CODE et n'est jamais inscrite dans le dépôt.
+    if 'key="student_access_code"' not in source:
+        if 'import os\n' not in source:
+            source = source.replace('import sqlite3\n', 'import sqlite3\nimport os\n', 1)
+        old_signup = '''            mail=st.text_input("E-mail UPPA"); ident=st.text_input("Numéro étudiant / identifiant"); comp=st.text_input("Formation / service")
+            ok=st.form_submit_button("Créer mon profil",type="primary")
+        if ok:
+            if not nom or not pre or not mail: st.warning("Nom, prénom et e-mail sont obligatoires.")
+            else:
+                try:
+                    st.session_state.user_id=exe("INSERT INTO utilisateurs(profil,nom,prenom,email,identifiant,composante) VALUES(?,?,?,?,?,?)",(prof,nom.strip(),pre.strip(),mail.strip(),ident.strip(),comp.strip())); go("Mon espace")
+                except sqlite3.IntegrityError: st.error("Cette adresse e-mail est déjà enregistrée.")'''
+        new_signup = '''            mail=st.text_input("E-mail UPPA"); ident=st.text_input("Numéro étudiant / identifiant"); comp=st.text_input("Formation / service")
+            student_access_code=st.text_input("Code d'accès étudiant",type="password",key="student_access_code") if prof=="Étudiant" else ""
+            if prof=="Étudiant":
+                st.caption("Ce code est communiqué par le SUAPS pour autoriser la création d'un profil étudiant.")
+            ok=st.form_submit_button("Créer mon profil",type="primary")
+        if ok:
+            _expected_student_code=os.getenv("STUDENT_ACCESS_CODE","").strip()
+            if prof=="Étudiant" and (not _expected_student_code or student_access_code.strip()!=_expected_student_code):
+                st.error("Code d'accès étudiant incorrect.")
+            elif not nom or not pre or not mail: st.warning("Nom, prénom et e-mail sont obligatoires.")
+            else:
+                try:
+                    st.session_state.user_id=exe("INSERT INTO utilisateurs(profil,nom,prenom,email,identifiant,composante) VALUES(?,?,?,?,?,?)",(prof,nom.strip(),pre.strip(),mail.strip(),ident.strip(),comp.strip())); go("Mon espace")
+                except sqlite3.IntegrityError: st.error("Cette adresse e-mail est déjà enregistrée.")'''
+        if old_signup in source:
+            source = source.replace(old_signup, new_signup, 1)
 
     # Compétition : sports collectifs + badminton + Pelote Basque.
     if '"Compétition"' not in source:
