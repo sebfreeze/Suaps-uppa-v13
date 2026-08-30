@@ -71,6 +71,8 @@ source = source.replace("""            if save: exe("UPDATE offres SET activite=
                 exe("DELETE FROM presences WHERE seance_id IN (SELECT id FROM seances WHERE offre_id=?)",(o["id"],))
                 exe("DELETE FROM seances WHERE offre_id=?",(o["id"],))
                 exe("DELETE FROM inscriptions WHERE offre_id=?",(o["id"],))
+                try: exe("DELETE FROM offre_semestres WHERE offre_id=?",(o["id"],))
+                except Exception: pass
                 exe("DELETE FROM offres WHERE id=?",(o["id"],))
                 st.success("Créneau supprimé."); st.rerun()
     elif sec=="Présences":""")
