@@ -88,9 +88,9 @@ def _get_pg_pool():
 
 def _pg_sql(sql):
     s=str(sql).strip()
-    # SQLite accepte les alias entre apostrophes, PostgreSQL non : normaliser
-    # les alias d'affichage CSV en identifiants SQL entre guillemets doubles.
-    s=re.sub(r"(?i)\bAS\s+'([^']+)'",lambda m:'AS "'+m.group(1)+'"',s)
+    # SQLite accepte les alias entre apostrophes, PostgreSQL non. On évite ici
+    # tout échappement ambigu dans la chaîne de code généré.
+    s=re.sub(r"(?i)AS[ ]+'([^']+)'",lambda m:'AS "'+m.group(1).replace('"','""')+'"',s)
     ignore=bool(re.match(r"(?is)^INSERT\s+OR\s+IGNORE\s+INTO",s))
     if ignore:
         s=re.sub(r"(?is)^INSERT\s+OR\s+IGNORE\s+INTO","INSERT INTO",s,count=1)
