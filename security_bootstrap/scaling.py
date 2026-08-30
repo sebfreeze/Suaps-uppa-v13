@@ -149,16 +149,26 @@ def _suaps_atomic_register(utilisateur,offre_id,modalite):
 
 
 # Le bloc STAFF_PROFILES est injecté par security_bootstrap/sitecustomize.py.
-# scaling.py est chargé ensuite : on enveloppe donc le transformeur de sécurité
-# pour appliquer nos corrections APRES cette injection, ce qui les rend effectives.
-_bootstrap = sys.modules.get("sitecustomize")
-if _bootstrap is not None and hasattr(_bootstrap, "_secure_generated_app"):
-    _previous_secure_generated_app = _bootstrap._secure_generated_app
+# scaling.py est chargé ensuite : on enveloppe donc le transformeur réellement
+# utilisé par _secure_compile afin d'appliquer ces corrections APRES l'injection.
+_secure_globals = getattr(_previous_compile, "__globals__", None)
+if isinstance(_secure_globals, dict) and callable(_secure_globals.get("_secure_generated_app")):
+    _previous_secure_generated_app = _secure_globals["_secure_generated_app"]
 
     def _secure_generated_app_with_staff(source):
         return _patch_staff_profiles(_previous_secure_generated_app(source))
 
-    _bootstrap._secure_generated_app = _secure_generated_app_with_staff
+    _secure_globals["_secure_generated_app"] = _secure_generated_app_with_staff
+else:
+    # Repli pour les environnements où sitecustomize est exposé sous son nom standard.
+    _bootstrap = sys.modules.get("sitecustomize")
+    if _bootstrap is not None and hasattr(_bootstrap, "_secure_generated_app"):
+        _previous_secure_generated_app = _bootstrap._secure_generated_app
+
+        def _secure_generated_app_with_staff(source):
+            return _patch_staff_profiles(_previous_secure_generated_app(source))
+
+        _bootstrap._secure_generated_app = _secure_generated_app_with_staff
 
 
 def _compile(source, filename, mode, *args, **kwargs):
