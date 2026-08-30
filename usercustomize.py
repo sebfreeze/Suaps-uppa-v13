@@ -11,7 +11,7 @@ def _inject_modules(source):
         return source
 
     # Codes d'accès : requis uniquement lors de la création d'un nouveau profil.
-    # Les valeurs sont lues côté serveur et ne sont jamais inscrites dans le dépôt.
+    # La valeur est lue côté serveur et n'est jamais inscrite dans le dépôt.
     if 'key="student_access_code"' not in source:
         if 'import os\n' not in source:
             source = source.replace('import sqlite3\n', 'import sqlite3\nimport os\n', 1)
@@ -32,11 +32,10 @@ def _inject_modules(source):
                 st.caption("Ce code est communiqué par le SUAPS pour autoriser la création d'un profil Personnel UPPA.")
             ok=st.form_submit_button("Créer mon profil",type="primary")
         if ok:
-            _expected_student_code=os.getenv("STUDENT_ACCESS_CODE","").strip()
-            _expected_personnel_code=os.getenv("PERSONNEL_ACCESS_CODE","").strip()
-            if prof=="Étudiant" and (not _expected_student_code or student_access_code.strip()!=_expected_student_code):
+            _expected_access_code=os.getenv("STUDENT_ACCESS_CODE","").strip()
+            if prof=="Étudiant" and (not _expected_access_code or student_access_code.strip()!=_expected_access_code):
                 st.error("Code d'accès étudiant incorrect.")
-            elif prof=="Personnel" and (not _expected_personnel_code or personnel_access_code.strip()!=_expected_personnel_code):
+            elif prof=="Personnel" and (not _expected_access_code or personnel_access_code.strip()!=_expected_access_code):
                 st.error("Code d'accès Personnel UPPA incorrect.")
             elif not nom or not pre or not mail: st.warning("Nom, prénom et e-mail sont obligatoires.")
             else:
