@@ -1,0 +1,47 @@
+name: Patch numero etudiant Excel
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-numero-etudiant-excel.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch numero etudiant import export
+        run: python .github/scripts/patch_numero_etudiant_excel.py
+      - name: Validate
+        run: |
+          python -m py_compile sitecustomize.py
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('sitecustomize.py').read_text(encoding='utf-8')
+          checks=[
+              '"numero_etudiant":"12345678"',
+              '{"colonne":"numero_etudiant"',
+              "u.identifiant AS 'N° étudiant',o.activite AS 'Activité'",
+              '["Nom","Prénom","Email","N° étudiant","Activité","Créneau"',
+              '["Nom","Prénom","Email","N° étudiant","Activité","Évaluation"',
+              'key="export_semester_xlsx"',
+              'sheet_name="Présences"',
+              'sheet_name="Évaluations"',
+          ]
+          for x in checks:
+              assert x in s, x
+          print('numero_etudiant Excel patch validated')
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sitecustomize.py
+          git diff --cached --quiet && exit 0
+          git commit -m "Ajoute numero etudiant aux imports exports Excel"
+          git push origin main
