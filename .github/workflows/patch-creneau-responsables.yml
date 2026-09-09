@@ -1,0 +1,169 @@
+name: Patch responsables creneaux
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-creneau-responsables.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch responsables de creneaux
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('sitecustomize.py')
+          s = p.read_text(encoding='utf-8')
+          marker = '        # CRÉNEAUX RESPONSABLES V1\n'
+          if marker in s:
+              print('feature already present')
+              raise SystemExit(0)
+
+          anchor = '        return source\n\n    def _suaps_compile'
+          if anchor not in s:
+              raise SystemExit('sitecustomize insertion anchor not found')
+
+          feature = r'''        # CRÉNEAUX RESPONSABLES V1
+        # Une table séparée évite de modifier la structure historique de "offres".
+        if "CREATE TABLE IF NOT EXISTS offre_responsables" not in source:
+            _resp_anchor = "def rows(sql,p=()):"
+            _resp_migration = '''try:
+    _c_resp=db()
+    _c_resp.execute("CREATE TABLE IF NOT EXISTS offre_responsables(id INTEGER PRIMARY KEY AUTOINCREMENT,offre_id INTEGER NOT NULL UNIQUE,responsable TEXT NOT NULL,coresponsable TEXT,cree_par TEXT,date_maj TEXT)")
+    _c_resp.commit(); _c_resp.close()
+except Exception:
+    try: _c_resp.close()
+    except Exception: pass
+
+def rows(sql,p=()):'''
+            if _resp_anchor in source:
+                source = source.replace(_resp_anchor, _resp_migration, 1)
+
+        _old_newslot = '''        with st.form("newslot"):
+            a,b=st.columns(2); act=a.selectbox("Activité",ACTIVITES); title=b.text_input("Intitulé",value=f"{act} - créneau")
+            c,d=st.columns(2); hor=c.text_input("Jour / horaire"); lieu=d.text_input("Lieu")
+            e,f=st.columns(2); cap=e.number_input("Capacité",1,200,20); pub=f.selectbox("Public",["Tous","Étudiants","Personnel"])
+            ok=st.form_submit_button("Créer le créneau",type="primary")
+        if ok: exe("INSERT INTO offres(activite,intitule,jour_horaire,lieu,capacite,public) VALUES(?,?,?,?,?,?)",(act,title,hor,lieu,cap,pub)); st.success("Créneau créé."); st.rerun()'''
+        _new_newslot = '''        _staff_names=["Hervé","Luhpo","Raphaël","Dudu","Geoffrey","Bernard","Mathieu","Michel","Stéphanie","Yan-Erick","Patrick","Sébastien"]
+        _current_teacher=(st.session_state.get("teacher_name") or "").strip()
+        with st.form("newslot"):
+            a,b=st.columns(2); act=a.selectbox("Activité",ACTIVITES); title=b.text_input("Intitulé",value=f"{act} - créneau")
+            c,d=st.columns(2); hor=c.text_input("Jour / horaire"); lieu=d.text_input("Lieu")
+            e,f=st.columns(2); cap=e.number_input("Capacité",1,200,20); pub=f.selectbox("Public",["Tous","Étudiants","Personnel"])
+            st.success(f"👤 Responsable automatique : {_current_teacher}" if _current_teacher else "👤 Responsable automatique : profil enseignant non identifié")
+            _co_options=["Aucun"]+[n for n in _staff_names if n!=_current_teacher]
+            co_resp=st.selectbox("Co-responsable (facultatif)",_co_options,key="newslot_co_responsable")
+            ok=st.form_submit_button("Créer le créneau",type="primary")
+        if ok:
+            if not _current_teacher:
+                st.error("Impossible d'identifier le responsable. Déconnecte-toi puis reconnecte-toi à l'espace enseignant.")
+            else:
+                _new_offer_id=exe("INSERT INTO offres(activite,intitule,jour_horaire,lieu,capacite,public) VALUES(?,?,?,?,?,?)",(act,title,hor,lieu,cap,pub))
+                _co_value="" if co_resp=="Aucun" else co_resp
+                exe("INSERT INTO offre_responsables(offre_id,responsable,coresponsable,cree_par,date_maj) VALUES(?,?,?,?,?)",(_new_offer_id,_current_teacher,_co_value,_current_teacher,str(date.today())))
+                st.success(f"Créneau créé. Responsable : {_current_teacher}.")
+                st.rerun()'''
+        if _old_newslot in source and 'key="newslot_co_responsable"' not in source:
+            source = source.replace(_old_newslot, _new_newslot, 1)
+
+        _edit_pick = '            o=mp[st.selectbox("Modifier un créneau",list(mp))]\n            with st.form("editslot"):'
+        _edit_pick_new = '''            o=mp[st.selectbox("Modifier un créneau",list(mp))]
+            _resp_row=one("SELECT * FROM offre_responsables WHERE offre_id=?",(o["id"],))
+            _resp_names=["Hervé","Luhpo","Raphaël","Dudu","Geoffrey","Bernard","Mathieu","Michel","Stéphanie","Yan-Erick","Patrick","Sébastien"]
+            _current_resp=(_resp_row.get("responsable") or "") if _resp_row else ""
+            _current_co=(_resp_row.get("coresponsable") or "") if _resp_row else ""
+            if _current_resp and _current_resp not in _resp_names: _resp_names.append(_current_resp)
+            if _current_co and _current_co not in _resp_names: _resp_names.append(_current_co)
+            _resp_options=["— Non attribué —"]+_resp_names
+            _co_edit_options=["Aucun"]+_resp_names
+            with st.form("editslot"):'''
+        if _edit_pick in source and '_resp_row=one("SELECT * FROM offre_responsables' not in source:
+            source = source.replace(_edit_pick, _edit_pick_new, 1)
+
+        _edit_capacity = '                e,f=st.columns(2); ec=e.number_input("Capacité",1,200,int(o["capacite"])); ep=f.selectbox("Public",["Tous","Étudiants","Personnel"],index=["Tous","Étudiants","Personnel"].index(o["public"]) if o["public"] in ["Tous","Étudiants","Personnel"] else 0)'
+        _edit_capacity_new = _edit_capacity + '''
+                _can_change_resp=st.session_state.get("teacher_role")=="Admin"
+                r1,r2=st.columns(2)
+                eresp=r1.selectbox("Responsable",_resp_options,index=_resp_options.index(_current_resp) if _current_resp in _resp_options else 0,disabled=not _can_change_resp,key=f"edit_resp_{o['id']}")
+                ecoresp=r2.selectbox("Co-responsable",_co_edit_options,index=_co_edit_options.index(_current_co) if _current_co in _co_edit_options else 0,disabled=not _can_change_resp,key=f"edit_co_{o['id']}")
+                if not _can_change_resp: st.caption("Le responsable peut être modifié uniquement par un administrateur.")'''
+        if _edit_capacity in source and 'key=f"edit_resp_{o[\'id\']}"' not in source:
+            source = source.replace(_edit_capacity, _edit_capacity_new, 1)
+
+        _save_line = '            if save: exe("UPDATE offres SET activite=?,intitule=?,jour_horaire=?,lieu=?,capacite=?,public=?,ouverte=? WHERE id=?",(ea,et,eh,el,ec,ep,int(opened),o["id"])); st.success("Créneau mis à jour."); st.rerun()'
+        _save_block = '''            if save:
+                if eresp=="— Non attribué —" and ecoresp!="Aucun":
+                    st.error("Choisis d'abord un responsable principal.")
+                elif eresp!="— Non attribué —" and ecoresp!="Aucun" and eresp==ecoresp:
+                    st.error("Le responsable et le co-responsable doivent être deux personnes différentes.")
+                else:
+                    exe("UPDATE offres SET activite=?,intitule=?,jour_horaire=?,lieu=?,capacite=?,public=?,ouverte=? WHERE id=?",(ea,et,eh,el,ec,ep,int(opened),o["id"]))
+                    _resp_value="" if eresp=="— Non attribué —" else eresp
+                    _co_value="" if ecoresp=="Aucun" else ecoresp
+                    _existing_resp=one("SELECT id FROM offre_responsables WHERE offre_id=?",(o["id"],))
+                    if _resp_value:
+                        if _existing_resp:
+                            exe("UPDATE offre_responsables SET responsable=?,coresponsable=?,date_maj=? WHERE offre_id=?",(_resp_value,_co_value,str(date.today()),o["id"]))
+                        else:
+                            exe("INSERT INTO offre_responsables(offre_id,responsable,coresponsable,cree_par,date_maj) VALUES(?,?,?,?,?)",(o["id"],_resp_value,_co_value,st.session_state.get("teacher_name") or _resp_value,str(date.today())))
+                    elif _existing_resp:
+                        exe("DELETE FROM offre_responsables WHERE offre_id=?",(o["id"],))
+                    st.success("Créneau mis à jour.")
+                    st.rerun()'''
+        if _save_line in source and '_existing_resp=one("SELECT id FROM offre_responsables' not in source:
+            source = source.replace(_save_line, _save_block, 1)
+
+        _delete_offer = '                exe("DELETE FROM offres WHERE id=?",(o["id"],))'
+        _delete_offer_new = '''                try: exe("DELETE FROM offre_responsables WHERE offre_id=?",(o["id"],))
+                except Exception: pass
+                exe("DELETE FROM offres WHERE id=?",(o["id"],))'''
+        if _delete_offer in source and 'DELETE FROM offre_responsables WHERE offre_id' not in source:
+            source = source.replace(_delete_offer, _delete_offer_new, 1)
+
+'''
+
+          s = s.replace(anchor, feature + anchor, 1)
+          p.write_text(s, encoding='utf-8')
+          print('sitecustomize.py patched with responsible-course feature')
+          PY
+      - name: Syntax check
+        run: python -S -m py_compile sitecustomize.py
+      - name: Static feature check
+        run: |
+          python -S - <<'PY'
+          import builtins
+          import importlib.util
+          from pathlib import Path
+
+          original_compile=builtins.compile
+          spec=importlib.util.spec_from_file_location('sc_test','sitecustomize.py')
+          mod=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          core=Path('v14_core.py').read_text(encoding='utf-8')
+          transformed=mod._patch_suaps_generated_app(core)
+          builtins.compile=original_compile
+          assert 'CREATE TABLE IF NOT EXISTS offre_responsables' in transformed
+          assert 'Responsable automatique' in transformed
+          assert 'newslot_co_responsable' in transformed
+          assert 'edit_resp_' in transformed
+          original_compile(transformed,'v14_core_transformed.py','exec')
+          print('transformed source syntax OK')
+          PY
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add sitecustomize.py
+          git diff --cached --quiet && exit 0
+          git commit -m 'Attribue automatiquement le responsable des créneaux'
+          git push
