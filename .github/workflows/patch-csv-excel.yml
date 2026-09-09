@@ -1,4 +1,4 @@
-name: Patch CSV Excel import
+name: Harden CSV Excel import export
 
 on:
   push:
@@ -15,23 +15,70 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - name: Patch import export
-        run: python .github/scripts/patch_csv_excel.py
+
+      - name: Harden import and export
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('sitecustomize.py')
+          s = p.read_text(encoding='utf-8')
+
+          import_marker = r'''                imp=pd.read_excel(import_file,sheet_name="Import") if import_file.name.lower().endswith(".xlsx") else pd.read_csv(import_file,sep=None,engine="python")\n'''
+          import_hardened = r'''                _MAX_IMPORT_BYTES=5*1024*1024\n                _MAX_IMPORT_ROWS=5000\n                _import_size=int(getattr(import_file,"size",0) or 0)\n                if _import_size>_MAX_IMPORT_BYTES:\n                    raise ValueError("Fichier trop volumineux : 5 Mo maximum.")\n                imp=pd.read_excel(import_file,sheet_name="Import") if import_file.name.lower().endswith(".xlsx") else pd.read_csv(import_file,sep=None,engine="python")\n                if len(imp)>_MAX_IMPORT_ROWS:\n                    raise ValueError("Fichier trop long : 5 000 lignes maximum.")\n'''
+          if '_MAX_IMPORT_BYTES=5*1024*1024' not in s:
+              if import_marker not in s:
+                  raise SystemExit('Import marker not found')
+              s = s.replace(import_marker, import_hardened, 1)
+
+          cols_marker = r'''        eva_cols=["Nom","Prénom","Email","N° étudiant","Activité","Évaluation","Note","Barème","Coefficient","Date"]\n        _export_xlsx=__import__("io").BytesIO()'''
+          cols_hardened = r'''        eva_cols=["Nom","Prénom","Email","N° étudiant","Activité","Évaluation","Note","Barème","Coefficient","Date"]\n        def _safe_export_value(v):\n            if not isinstance(v,str): return v\n            _lead=v.lstrip()[:1]\n            if _lead in ("=","+","-","@") or v[:1] in ("\\t","\\r","\\n"):\n                return "'"+v\n            return v\n        _ins_df=pd.DataFrame(ins_rows,columns=ins_cols).map(_safe_export_value)\n        _pre_df=pd.DataFrame(pre_rows,columns=pre_cols).map(_safe_export_value)\n        _eva_df=pd.DataFrame(eva_rows,columns=eva_cols).map(_safe_export_value)\n        _export_xlsx=__import__("io").BytesIO()'''
+          if '_safe_export_value' not in s:
+              if cols_marker not in s:
+                  raise SystemExit('Export marker not found')
+              s = s.replace(cols_marker, cols_hardened, 1)
+
+          replacements = {
+              'pd.DataFrame(ins_rows,columns=ins_cols).to_excel(_ew,index=False,sheet_name="Inscriptions")': '_ins_df.to_excel(_ew,index=False,sheet_name="Inscriptions")',
+              'pd.DataFrame(pre_rows,columns=pre_cols).to_excel(_ew,index=False,sheet_name="Présences")': '_pre_df.to_excel(_ew,index=False,sheet_name="Présences")',
+              'pd.DataFrame(eva_rows,columns=eva_cols).to_excel(_ew,index=False,sheet_name="Évaluations")': '_eva_df.to_excel(_ew,index=False,sheet_name="Évaluations")',
+              'pd.DataFrame(ins_rows,columns=ins_cols).to_csv(index=False).encode("utf-8-sig")': '_ins_df.to_csv(index=False).encode("utf-8-sig")',
+              'pd.DataFrame(pre_rows,columns=pre_cols).to_csv(index=False).encode("utf-8-sig")': '_pre_df.to_csv(index=False).encode("utf-8-sig")',
+              'pd.DataFrame(eva_rows,columns=eva_cols).to_csv(index=False).encode("utf-8-sig")': '_eva_df.to_csv(index=False).encode("utf-8-sig")',
+          }
+          for old, new in replacements.items():
+              s = s.replace(old, new)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
       - name: Validate
         run: |
           python -m py_compile sitecustomize.py v14_complete.py v15_base.py v14_core.py
           python - <<'PY'
           from pathlib import Path
           s=Path('sitecustomize.py').read_text(encoding='utf-8')
-          for x in ['Télécharger le modèle Excel','type=["csv","xlsx"]','pd.read_excel(import_file,sheet_name="Import")','columns=ins_cols','columns=pre_cols','columns=eva_cols']:
+          required = [
+              '_MAX_IMPORT_BYTES=5*1024*1024',
+              '_MAX_IMPORT_ROWS=5000',
+              '_safe_export_value',
+              '_ins_df.to_excel',
+              '_pre_df.to_excel',
+              '_eva_df.to_excel',
+              '_ins_df.to_csv',
+              '_pre_df.to_csv',
+              '_eva_df.to_csv',
+          ]
+          for x in required:
               assert x in s, x
-          print('CSV / Excel patch validated')
+          print('CSV / Excel security hardening validated')
           PY
+
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add sitecustomize.py
           git diff --cached --quiet && exit 0
-          git commit -m "Fiabilise import export CSV et ajoute modele Excel"
+          git commit -m "Sécurise imports exports CSV Excel"
           git push origin main
