@@ -6,10 +6,13 @@ s = p.read_text(encoding="utf-8")
 
 def replace_once(old, new, label):
     global s
-    if new in s:
+    if new and new in s:
         print(f"{label}: déjà appliqué")
         return
     if old not in s:
+        if not new and 'TEACHER_ACCESS_CODE' not in s:
+            print(f"{label}: déjà appliqué")
+            return
         raise SystemExit(f"Ancre introuvable: {label}")
     s = s.replace(old, new, 1)
     print(f"{label}: appliqué")
