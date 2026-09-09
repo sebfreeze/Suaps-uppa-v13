@@ -179,8 +179,21 @@ def init_pedagogy():
         )
     """)
 
+    execute("""
+        CREATE TABLE IF NOT EXISTS pedagogie_suppressions(
+            activite TEXT NOT NULL,
+            numero INTEGER NOT NULL,
+            PRIMARY KEY(activite, numero)
+        )
+    """)
+    suppressions = {
+        (r["activite"], r["numero"])
+        for r in query_rows("SELECT activite, numero FROM pedagogie_suppressions")
+    }
     for activite, seances in DEFAULT_CYCLES.items():
         for numero, data in enumerate(seances, start=1):
+            if (activite, numero) in suppressions:
+                continue
             titre, objectif, contenu, situation, criteres, duree, materiel, codes = data
             execute("""
                 INSERT INTO pedagogie_seances(activite,numero,titre,objectif,contenu,situation,criteres,duree,materiel)
@@ -209,8 +222,52 @@ st.caption("Progressions prêtes à l'emploi, modifiables par l'enseignant et re
 st.info("🛟 SSA et 🏄 Surf : les contenus sont des trames pédagogiques à adapter au référentiel en vigueur, aux conditions du milieu, au matériel et au protocole de sécurité de l'établissement.")
 
 activite = st.selectbox("Choisir l'activité", list(DEFAULT_CYCLES.keys()), format_func=lambda x: DISPLAY[x])
-nb_seances = len(DEFAULT_CYCLES[activite])
-numero = st.selectbox("Séance", range(1, nb_seances + 1), format_func=lambda n: f"Séance {n}")
+
+deleted_rows = query_rows(
+    "SELECT numero FROM pedagogie_suppressions WHERE activite=? ORDER BY numero",
+    (activite,)
+)
+deleted_numbers = [int(r["numero"]) for r in deleted_rows]
+
+if deleted_numbers:
+    with st.expander(f"🗑️ Séances supprimées ({len(deleted_numbers)})"):
+        restore_num = st.selectbox(
+            "Séance à restaurer",
+            deleted_numbers,
+            format_func=lambda n: f"Séance {n}",
+            key=f"restore_deleted_{activite}"
+        )
+        if st.button(
+            "↩️ Restaurer cette séance",
+            use_container_width=True,
+            key=f"restore_deleted_btn_{activite}"
+        ):
+            execute(
+                "DELETE FROM pedagogie_suppressions WHERE activite=? AND numero=?",
+                (activite, restore_num)
+            )
+            st.success(f"Séance {restore_num} restaurée.")
+            st.rerun()
+
+all_sessions = query_rows(
+    "SELECT numero, titre FROM pedagogie_seances WHERE activite=? ORDER BY numero",
+    (activite,)
+)
+available_sessions = [r for r in all_sessions if int(r["numero"]) not in deleted_numbers]
+nb_seances = len(available_sessions)
+
+if not available_sessions:
+    st.warning("Toutes les séances de cette activité ont été supprimées. Tu peux en restaurer une dans la rubrique ci-dessus.")
+    st.stop()
+
+session_numbers = [int(r["numero"]) for r in available_sessions]
+session_titles = {int(r["numero"]): r["titre"] for r in available_sessions}
+numero = st.selectbox(
+    "Séance",
+    session_numbers,
+    format_func=lambda n: f"Séance {n} — {session_titles[n]}"
+)
+session_position = session_numbers.index(numero) + 1
 
 rows = query_rows("SELECT * FROM pedagogie_seances WHERE activite=? AND numero=?", (activite, numero))
 if not rows:
@@ -224,7 +281,7 @@ linked_ids = {r["competence_id"] for r in liens}
 linked = [c for c in competences if c["id"] in linked_ids]
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Progression", f"{numero}/{nb_seances}")
+c1.metric("Progression", f"{session_position}/{nb_seances}")
 c2.metric("Durée indicative", f"{s['duree']} min")
 c3.metric("Compétences liées", len(linked))
 
@@ -296,6 +353,43 @@ with edit_tab:
                 """, (activite, numero, cid))
             st.success("Séance mise à jour.")
             st.rerun()
+
+st.divider()
+delete_state_key = f"confirm_delete_ped_{activite}_{numero}"
+if st.button(
+    "🗑️ Supprimer cette séance",
+    use_container_width=True,
+    key=f"delete_ped_{activite}_{numero}"
+):
+    st.session_state[delete_state_key] = True
+
+if st.session_state.get(delete_state_key):
+    st.warning(
+        f"Confirmer la suppression de la séance {numero} — {s['titre']} ? "
+        "Les notes et évaluations déjà enregistrées seront conservées."
+    )
+    dc1, dc2 = st.columns(2)
+    if dc1.button(
+        "Oui, supprimer",
+        type="primary",
+        use_container_width=True,
+        key=f"confirm_delete_yes_{activite}_{numero}"
+    ):
+        execute(
+            "INSERT INTO pedagogie_suppressions(activite,numero) VALUES(?,?) "
+            "ON CONFLICT(activite,numero) DO NOTHING",
+            (activite, numero)
+        )
+        st.session_state.pop(delete_state_key, None)
+        st.success("Séance supprimée.")
+        st.rerun()
+    if dc2.button(
+        "Annuler",
+        use_container_width=True,
+        key=f"confirm_delete_no_{activite}_{numero}"
+    ):
+        st.session_state.pop(delete_state_key, None)
+        st.rerun()
 
     if st.button("↩️ Restaurer cette séance à la version proposée", use_container_width=True):
         d = DEFAULT_CYCLES[activite][numero - 1]
