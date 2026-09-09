@@ -1,0 +1,67 @@
+name: Patch modalite columns v2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-modalite-columns-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch sitecustomize
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('sitecustomize.py')
+          s = p.read_text(encoding='utf-8')
+
+          pairs = []
+          pairs.append((
+              'st.info("Colonnes obligatoires : nom, prenom, email, activite, creneau. Recommandées : semestre, modalite, jour_horaire. Facultatives : identifiant, composante, profil.")',
+              'st.info("Colonnes obligatoires : nom, prenom, email, activite, creneau. Pour la modalité, mettre X dans une seule colonne : UET, UECF ou Non noté. Recommandées : semestre, jour_horaire. Facultatives : identifiant, composante, profil.")'
+          ))
+          pairs.append((
+              '            "semestre":"Semestre 1 — 2026/2027","modalite":"UET","activite":"Natation","creneau":"Natation tous niveaux","jour_horaire":"Lundi 18h00"',
+              '            "semestre":"Semestre 1 — 2026/2027","UET":"X","UECF":"","Non noté":"","activite":"Natation","creneau":"Natation tous niveaux","jour_horaire":"Lundi 18h00"'
+          ))
+          pairs.append((
+              '            {"colonne":"modalite","statut":"Recommandé","type / valeurs":"UET, UECF ou Non noté","exemple":"UET"},',
+              '            {"colonne":"UET","statut":"Modalité","type / valeurs":"Mettre X si l\'étudiant est inscrit en UET","exemple":"X"},\\n            {"colonne":"UECF","statut":"Modalité","type / valeurs":"Mettre X si l\'étudiant est inscrit en UECF","exemple":""},\\n            {"colonne":"Non noté","statut":"Modalité","type / valeurs":"Mettre X si l\'inscription n\'est pas notée","exemple":""},'
+          ))
+          pairs.append((
+              '            for _col,_width in {"A":16,"B":16,"C":32,"D":16,"E":18,"F":16,"G":28,"H":16,"I":22,"J":28,"K":22}.items(): _ws.column_dimensions[_col].width=_width',
+              '            for _col,_width in {"A":16,"B":16,"C":32,"D":16,"E":18,"F":16,"G":28,"H":10,"I":10,"J":12,"K":22,"L":28,"M":22}.items(): _ws.column_dimensions[_col].width=_width'
+          ))
+
+          for i, (old, new) in enumerate(pairs, 1):
+              if old not in s:
+                  raise SystemExit(f'pattern {i} not found')
+              s = s.replace(old, new, 1)
+
+          old_modalite = '                            modalite=clean("modalite","Non noté")\\n                            norm_mod={"uet":"UET","uecf":"UECF","non note":"Non noté","non noté":"Non noté","non-note":"Non noté"}\\n                            modalite=norm_mod.get(modalite.lower(),modalite)\\n                            if modalite not in ("UET","UECF","Non noté"):\\n                                errors.append({"ligne":line,"email":email,"erreur":"Modalité inconnue : "+modalite}); continue'
+          new_modalite = '                            modalite=clean("modalite","")\\n                            _flags=[]\\n                            def _marked(name):\\n                                return clean(name).lower() in ("x","1","oui","yes","true","vrai")\\n                            if _marked("uet"): _flags.append("UET")\\n                            if _marked("uecf"): _flags.append("UECF")\\n                            if _marked("non note"): _flags.append("Non noté")\\n                            if len(_flags)>1:\\n                                errors.append({"ligne":line,"email":email,"erreur":"Une seule modalité doit être cochée : UET, UECF ou Non noté"}); continue\\n                            if _flags: modalite=_flags[0]\\n                            if not modalite: modalite="Non noté"\\n                            norm_mod={"uet":"UET","uecf":"UECF","non note":"Non noté","non noté":"Non noté","non-note":"Non noté"}\\n                            modalite=norm_mod.get(modalite.lower(),modalite)\\n                            if modalite not in ("UET","UECF","Non noté"):\\n                                errors.append({"ligne":line,"email":email,"erreur":"Modalité inconnue : "+modalite}); continue'
+          if old_modalite not in s:
+              raise SystemExit('modalite escaped pattern not found')
+          s = s.replace(old_modalite, new_modalite, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Syntax check
+        run: python -m py_compile sitecustomize.py
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add sitecustomize.py
+          git diff --cached --quiet && exit 0
+          git commit -m 'Ajoute colonnes UET UECF Non noté au modèle import'
+          git push
