@@ -17,9 +17,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Vérifier le script
-        run: python -S -m py_compile .github/scripts/harden_security_v2_fixed.py
+        run: python -S -m py_compile .github/scripts/harden_security_v3.py
       - name: Appliquer les garde-fous
-        run: python -S .github/scripts/harden_security_v2_fixed.py
+        run: python -S .github/scripts/harden_security_v3.py
       - name: Vérifier la syntaxe
         run: |
           python -S -m py_compile security_bootstrap/sitecustomize.py sitecustomize.py 'pages/02_📚_Pédagogie.py'
