@@ -379,11 +379,6 @@ def go(p): st.session_state.page=p; st.rerun()'''
         _clear_teacher_auth()
     if st.session_state.get("admin_auth") and not st.session_state.get("teacher_name"):
         st.session_state.admin_auth=False
-    _teacher_code=os.getenv("TEACHER_ACCESS_CODE","").strip()
-    if not _teacher_code:
-        st.error("Accès enseignant temporairement indisponible : code de sécurité non configuré.")
-        if st.button("← Accueil",key="admin_login_back"): go("Accueil")
-        return
     with st.form("teacher_login_form"):
         _person=st.selectbox(
             "Qui êtes-vous ?",
