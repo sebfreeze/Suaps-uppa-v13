@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import time
 from datetime import date
 from pathlib import Path
 
@@ -12,9 +13,17 @@ except Exception:
 
 st.set_page_config(page_title="Pédagogie SUAPS", page_icon="📚", layout="wide")
 
-if st.session_state.get("role") != "Enseignant":
-    st.warning("🔒 La partie Pédagogie est réservée au mode Enseignant. Passe d'abord l'application en mode Enseignant.")
+_teacher_timeout=max(300,int(os.getenv("TEACHER_SESSION_TIMEOUT","1800") or 1800))
+_now=time.time(); _last=float(st.session_state.get("teacher_last_activity") or _now)
+if (not st.session_state.get("admin_auth") or not st.session_state.get("teacher_name") or _now-_last>_teacher_timeout):
+    st.session_state.admin_auth=False
+    st.session_state.teacher_name=None
+    st.session_state.teacher_role=None
+    st.session_state.teacher_avatar=None
+    st.session_state.teacher_last_activity=0.0
+    st.warning("🔒 La partie Pédagogie est réservée aux enseignants authentifiés depuis l'application SUAPS.")
     st.stop()
+st.session_state.teacher_last_activity=_now
 
 
 def secret_value(name, default=""):

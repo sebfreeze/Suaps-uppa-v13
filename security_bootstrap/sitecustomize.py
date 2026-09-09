@@ -34,7 +34,7 @@ def _secure_generated_app(source):
     if "from psycopg_pool import ConnectionPool" not in source:
         source = source.replace(
             "import streamlit as st",
-            "import streamlit as st\nimport os\nimport re\nimport secrets\ntry:\n    import psycopg\n    from psycopg.rows import dict_row\n    try:\n        from psycopg_pool import ConnectionPool\n    except Exception:\n        ConnectionPool=None\nexcept Exception:\n    psycopg=None\n    dict_row=None\n    ConnectionPool=None",
+            "import streamlit as st\nimport os\nimport re\nimport secrets\nimport time\ntry:\n    import psycopg\n    from psycopg.rows import dict_row\n    try:\n        from psycopg_pool import ConnectionPool\n    except Exception:\n        ConnectionPool=None\nexcept Exception:\n    psycopg=None\n    dict_row=None\n    ConnectionPool=None",
             1,
         )
 
@@ -227,12 +227,104 @@ st.session_state.setdefault("admin_auth",False)
 st.session_state.setdefault("teacher_name",None)
 st.session_state.setdefault("teacher_role",None)
 st.session_state.setdefault("teacher_avatar",None)
+st.session_state.setdefault("teacher_last_activity",0.0)
+st.session_state.setdefault("user_last_activity",0.0)
+st.session_state.setdefault("student_login_failures",0)
+st.session_state.setdefault("student_login_lock_until",0.0)
+st.session_state.setdefault("teacher_login_failures",0)
+st.session_state.setdefault("teacher_login_lock_until",0.0)
+
+def _auth_env_int(name,default):
+    try: return int(os.getenv(name,str(default)))
+    except Exception: return int(default)
+
+AUTH_MAX_ATTEMPTS=max(3,_auth_env_int("AUTH_MAX_ATTEMPTS",5))
+AUTH_LOCK_SECONDS=max(60,_auth_env_int("AUTH_LOCK_SECONDS",300))
+STUDENT_SESSION_TIMEOUT=max(300,_auth_env_int("STUDENT_SESSION_TIMEOUT",3600))
+TEACHER_SESSION_TIMEOUT=max(300,_auth_env_int("TEACHER_SESSION_TIMEOUT",1800))
+
+def _auth_remaining(prefix):
+    return max(0,int(float(st.session_state.get(prefix+"_lock_until") or 0)-time.time()))
+
+def _auth_fail(prefix):
+    n=int(st.session_state.get(prefix+"_failures") or 0)+1
+    if n>=AUTH_MAX_ATTEMPTS:
+        st.session_state[prefix+"_failures"]=0
+        st.session_state[prefix+"_lock_until"]=time.time()+AUTH_LOCK_SECONDS
+    else:
+        st.session_state[prefix+"_failures"]=n
+
+def _auth_ok(prefix):
+    st.session_state[prefix+"_failures"]=0
+    st.session_state[prefix+"_lock_until"]=0.0
+
+def _clear_student_auth():
+    st.session_state.user_id=None
+    st.session_state.user_last_activity=0.0
+
+def _clear_teacher_auth():
+    st.session_state.admin_auth=False
+    st.session_state.teacher_name=None
+    st.session_state.teacher_role=None
+    st.session_state.teacher_avatar=None
+    st.session_state.teacher_last_activity=0.0
+
+def _staff_offers():
+    if st.session_state.get("teacher_role")=="Admin":
+        return rows("SELECT * FROM offres ORDER BY activite,intitule")
+    _name=(st.session_state.get("teacher_name") or "").strip()
+    if not _name: return []
+    return rows("SELECT DISTINCT o.* FROM offres o JOIN offre_responsables r ON r.offre_id=o.id WHERE r.responsable=? OR r.coresponsable=? ORDER BY o.activite,o.intitule",(_name,_name))
+
+def _staff_students():
+    if st.session_state.get("teacher_role")=="Admin":
+        return rows("SELECT * FROM utilisateurs WHERE profil='Étudiant' AND actif=1 ORDER BY nom,prenom")
+    _name=(st.session_state.get("teacher_name") or "").strip()
+    if not _name: return []
+    return rows("SELECT DISTINCT u.* FROM utilisateurs u JOIN inscriptions i ON i.utilisateur_id=u.id AND i.statut='Inscrit' JOIN offre_responsables r ON r.offre_id=i.offre_id WHERE u.profil='Étudiant' AND u.actif=1 AND (r.responsable=? OR r.coresponsable=?) ORDER BY u.nom,u.prenom",(_name,_name))
+
+def _staff_recent_regs():
+    _base="SELECT u.prenom,u.nom,o.activite,i.modalite,i.date_inscription FROM inscriptions i JOIN utilisateurs u ON u.id=i.utilisateur_id JOIN offres o ON o.id=i.offre_id"
+    if st.session_state.get("teacher_role")=="Admin":
+        return rows(_base+" ORDER BY i.id DESC LIMIT 30")
+    _name=(st.session_state.get("teacher_name") or "").strip()
+    if not _name: return []
+    return rows(_base+" JOIN offre_responsables r ON r.offre_id=o.id WHERE r.responsable=? OR r.coresponsable=? ORDER BY i.id DESC LIMIT 30",(_name,_name))
+
+def _staff_dashboard_counts():
+    if st.session_state.get("teacher_role")=="Admin":
+        return one("SELECT (SELECT COUNT(*) FROM utilisateurs WHERE actif=1) u,(SELECT COUNT(*) FROM inscriptions WHERE statut='Inscrit') i,(SELECT COUNT(*) FROM seances) s,(SELECT COUNT(*) FROM presences WHERE statut='Présent') p")
+    _ids=[int(o["id"]) for o in _staff_offers()]
+    if not _ids: return {"u":0,"i":0,"s":0,"p":0}
+    _ph=",".join("?" for _ in _ids); _p=tuple(_ids)
+    _u=one(f"SELECT COUNT(DISTINCT utilisateur_id) n FROM inscriptions WHERE statut='Inscrit' AND offre_id IN ({_ph})",_p)
+    _i=one(f"SELECT COUNT(*) n FROM inscriptions WHERE statut='Inscrit' AND offre_id IN ({_ph})",_p)
+    _s=one(f"SELECT COUNT(*) n FROM seances WHERE offre_id IN ({_ph})",_p)
+    _pr=one(f"SELECT COUNT(*) n FROM presences p JOIN seances s ON s.id=p.seance_id WHERE p.statut='Présent' AND s.offre_id IN ({_ph})",_p)
+    return {"u":int(_u["n"] if _u else 0),"i":int(_i["n"] if _i else 0),"s":int(_s["n"] if _s else 0),"p":int(_pr["n"] if _pr else 0)}
+
 def go(p): st.session_state.page=p; st.rerun()'''
     source = source.replace(
         'def go(p): st.session_state.page=p; st.rerun()',
         staff_block,
         1,
     )
+
+    # Expiration automatique des sessions étudiant + cloisonnement enseignants.
+    source = source.replace(
+        'def user(): return one("SELECT * FROM utilisateurs WHERE id=? AND actif=1",(st.session_state.user_id,)) if st.session_state.user_id else None',
+        'def user():\n    if not st.session_state.user_id: return None\n    _now=time.time(); _last=float(st.session_state.get("user_last_activity") or _now)\n    if _now-_last>STUDENT_SESSION_TIMEOUT:\n        _clear_student_auth(); return None\n    st.session_state.user_last_activity=_now\n    return one("SELECT * FROM utilisateurs WHERE id=? AND actif=1",(st.session_state.user_id,))',
+        1,
+    )
+    source = source.replace('offs=rows("SELECT * FROM offres ORDER BY activite,intitule")','offs=_staff_offers()')
+    source = source.replace('_offs=rows("SELECT * FROM offres ORDER BY activite,intitule")','_offs=_staff_offers()')
+    source = source.replace('us=rows("SELECT * FROM utilisateurs WHERE profil=\'Étudiant\' AND actif=1 ORDER BY nom,prenom")','us=_staff_students()')
+    source = source.replace(
+        's=one("SELECT (SELECT COUNT(*) FROM utilisateurs WHERE actif=1) u,(SELECT COUNT(*) FROM inscriptions WHERE statut=\'Inscrit\') i,(SELECT COUNT(*) FROM seances) s,(SELECT COUNT(*) FROM presences WHERE statut=\'Présent\') p")',
+        's=_staff_dashboard_counts()',1)
+    source = source.replace(
+        'd=rows("SELECT u.prenom,u.nom,o.activite,i.modalite,i.date_inscription FROM inscriptions i JOIN utilisateurs u ON u.id=i.utilisateur_id JOIN offres o ON o.id=i.offre_id ORDER BY i.id DESC LIMIT 30")',
+        'd=_staff_recent_regs()',1)
 
     # L'entrée Enseignant/Admin ne doit jamais ouvrir directement l'administration.
     source = source.replace(
@@ -252,7 +344,10 @@ def go(p): st.session_state.page=p; st.rerun()'''
     admin_login = '''def admin_login():
     topbar(); hero("Accès enseignant","Un code commun, puis un profil nominatif pour savoir qui utilise l'application.","ESPACE SÉCURISÉ")
     if st.session_state.get("admin_auth") and st.session_state.get("teacher_name"):
-        go("Administration")
+        _now=time.time(); _last=float(st.session_state.get("teacher_last_activity") or _now)
+        if _now-_last<=TEACHER_SESSION_TIMEOUT:
+            st.session_state.teacher_last_activity=_now; go("Administration")
+        _clear_teacher_auth()
     if st.session_state.get("admin_auth") and not st.session_state.get("teacher_name"):
         st.session_state.admin_auth=False
     _teacher_code=os.getenv("TEACHER_ACCESS_CODE","").strip()
@@ -270,13 +365,19 @@ def go(p): st.session_state.page=p; st.rerun()'''
         _entered=st.text_input("Code enseignant commun",type="password",autocomplete="off")
         _ok=st.form_submit_button("Accéder à l'espace enseignant",type="primary",use_container_width=True)
     if _ok:
-        if secrets.compare_digest(_entered.strip(),_teacher_code):
+        _remaining=_auth_remaining("teacher_login")
+        if _remaining>0:
+            st.error(f"Trop de tentatives. Réessaie dans {_remaining} seconde(s).")
+        elif secrets.compare_digest(_entered.strip(),_teacher_code):
+            _auth_ok("teacher_login")
             st.session_state.admin_auth=True
             st.session_state.teacher_name=_person["nom"]
             st.session_state.teacher_role=_person["role"]
             st.session_state.teacher_avatar=_person["avatar"]
+            st.session_state.teacher_last_activity=time.time()
             go("Administration")
         else:
+            _auth_fail("teacher_login")
             st.error("Code enseignant incorrect.")
     if st.button("← Accueil",key="admin_login_home"): go("Accueil")
 
@@ -287,14 +388,14 @@ def go(p): st.session_state.page=p; st.rerun()'''
     # Garde systématique, même si une navigation directe tente d'ouvrir Administration.
     source = source.replace(
         'def admin():\n    topbar(); hero("Enseignant / Administration"',
-        'def admin():\n    if not st.session_state.get("admin_auth") or not st.session_state.get("teacher_name"):\n        go("Connexion Admin")\n    topbar(); hero("Enseignant / Administration"',
+        'def admin():\n    if not st.session_state.get("admin_auth") or not st.session_state.get("teacher_name"):\n        go("Connexion Admin")\n    _now=time.time(); _last=float(st.session_state.get("teacher_last_activity") or _now)\n    if _now-_last>TEACHER_SESSION_TIMEOUT:\n        _clear_teacher_auth(); go("Connexion Admin")\n    st.session_state.teacher_last_activity=_now\n    topbar(); hero("Enseignant / Administration"',
         1,
     )
 
     # Afficher clairement l'identité active et permettre la déconnexion.
     source = source.replace(
         '    sec=st.radio("Rubrique",',
-        '    _role_label="Enseignant + Administrateur" if st.session_state.get("teacher_name") in ("Sébastien","Geoffrey","Bernard") else ("Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant")\n    st.success(f"{st.session_state.get(\'teacher_avatar\') or \'🏅\'}  Connecté : {st.session_state.get(\'teacher_name\')} • {_role_label}")\n    if st.button("🔒 Se déconnecter enseignant",key="teacher_logout"):\n        st.session_state.admin_auth=False; st.session_state.teacher_name=None; st.session_state.teacher_role=None; st.session_state.teacher_avatar=None; st.session_state.profil=None; go("Accueil")\n    sec=st.radio("Rubrique",',
+        '    _role_label="Enseignant + Administrateur" if st.session_state.get("teacher_name") in ("Sébastien","Geoffrey","Bernard") else ("Administrateur" if st.session_state.get("teacher_role")=="Admin" else "Enseignant")\n    st.success(f"{st.session_state.get(\'teacher_avatar\') or \'🏅\'}  Connecté : {st.session_state.get(\'teacher_name\')} • {_role_label}")\n    if st.button("🔒 Se déconnecter enseignant",key="teacher_logout"):\n        _clear_teacher_auth(); st.session_state.profil=None; go("Accueil")\n    sec=st.radio("Rubrique",',
         1,
     )
 
@@ -315,16 +416,26 @@ def go(p): st.session_state.page=p; st.rerun()'''
             else: st.error("Profil introuvable.")'''
     new_login = '''        with st.form("login"):
             email=st.text_input("Adresse e-mail")
-            ident_login=st.text_input("Numéro étudiant / identifiant",type="password",help="Demandé si un identifiant est enregistré sur votre profil.")
+            ident_login=st.text_input("Numéro étudiant / identifiant",type="password",help="Obligatoire pour un étudiant.")
             ok=st.form_submit_button("Me connecter",type="primary")
         if ok:
-            r=one("SELECT * FROM utilisateurs WHERE lower(email)=lower(?) AND profil=? AND actif=1",(email.strip(),prof))
-            if not r:
-                st.error("Profil introuvable.")
-            elif str(r.get("identifiant") or "").strip() and not secrets.compare_digest(ident_login.strip(),str(r.get("identifiant") or "").strip()):
-                st.error("Identifiant incorrect.")
+            _remaining=_auth_remaining("student_login")
+            if _remaining>0:
+                st.error(f"Trop de tentatives. Réessaie dans {_remaining} seconde(s).")
             else:
-                st.session_state.user_id=r["id"]; go("Mon espace")'''
+                r=one("SELECT * FROM utilisateurs WHERE lower(email)=lower(?) AND profil=? AND actif=1",(email.strip(),prof))
+                _stored_ident=str(r.get("identifiant") or "").strip() if r else ""
+                if not r:
+                    _auth_fail("student_login"); st.error("Profil introuvable.")
+                elif prof=="Étudiant" and not _stored_ident:
+                    _auth_fail("student_login"); st.error("Profil étudiant incomplet : numéro étudiant absent. Contacte le SUAPS.")
+                elif _stored_ident and not secrets.compare_digest(ident_login.strip(),_stored_ident):
+                    _auth_fail("student_login"); st.error("Identifiant incorrect.")
+                else:
+                    _auth_ok("student_login")
+                    st.session_state.user_id=r["id"]
+                    st.session_state.user_last_activity=time.time()
+                    go("Mon espace")'''
     source = source.replace(old_login, new_login, 1)
 
     # Pour un nouveau profil étudiant, le numéro étudiant devient obligatoire.
