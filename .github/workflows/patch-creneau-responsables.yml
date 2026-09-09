@@ -49,3 +49,5 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m 'Attribue automatiquement le responsable des créneaux'
           git push
+
+# relance après correction du script
