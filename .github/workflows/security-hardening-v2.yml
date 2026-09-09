@@ -1,0 +1,55 @@
+name: Security hardening v2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/security-hardening-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Vérifier le script
+        run: python -S -m py_compile .github/scripts/harden_security_v2_fixed.py
+      - name: Appliquer les garde-fous
+        run: python -S .github/scripts/harden_security_v2_fixed.py
+      - name: Vérifier la syntaxe
+        run: |
+          python -S -m py_compile security_bootstrap/sitecustomize.py sitecustomize.py 'pages/02_📚_Pédagogie.py'
+      - name: Contrôles statiques
+        run: |
+          python -S - <<'PY'
+          from pathlib import Path
+          sec=Path('security_bootstrap/sitecustomize.py').read_text(encoding='utf-8')
+          root=Path('sitecustomize.py').read_text(encoding='utf-8')
+          ped=Path('pages/02_📚_Pédagogie.py').read_text(encoding='utf-8')
+          checks=[
+              ('anti bruteforce étudiant','student_login_lock_until' in sec and '_auth_fail("student_login")' in sec),
+              ('anti bruteforce enseignant','teacher_login_lock_until' in sec and '_auth_fail("teacher_login")' in sec),
+              ('expiration étudiant','STUDENT_SESSION_TIMEOUT' in sec and 'user_last_activity' in sec),
+              ('expiration enseignant','TEACHER_SESSION_TIMEOUT' in sec and 'teacher_last_activity' in sec),
+              ('groupes enseignants','_staff_offers' in sec and '_staff_students' in sec and '_staff_dashboard_counts' in sec),
+              ('identifiant import','required=["nom","prenom","email","identifiant","activite","creneau"]' in root),
+              ('identifiant guide','{"colonne":"identifiant","statut":"Obligatoire"' in root),
+              ('pédagogie protégée','admin_auth' in ped and 'teacher_last_activity' in ped),
+          ]
+          bad=[name for name,ok in checks if not ok]
+          if bad:
+              raise SystemExit('Contrôles échoués: '+', '.join(bad))
+          print('Security hardening V2 OK')
+          PY
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add security_bootstrap/sitecustomize.py sitecustomize.py 'pages/02_📚_Pédagogie.py'
+          git diff --cached --quiet && exit 0
+          git commit -m 'Renforce sécurité étudiant et cloisonnement enseignant'
+          git push
