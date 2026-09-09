@@ -311,7 +311,7 @@ with fiche_tab:
 
     st.divider()
     st.markdown("### Vue d'ensemble du cycle")
-    cycle_rows = query_rows("SELECT * FROM pedagogie_seances WHERE activite=? ORDER BY numero", (activite,))
+    cycle_rows = [item for item in query_rows("SELECT * FROM pedagogie_seances WHERE activite=? ORDER BY numero", (activite,)) if int(item["numero"]) not in deleted_numbers]
     for item in cycle_rows:
         with st.expander(f"Séance {item['numero']} — {item['titre']}", expanded=(item["numero"] == numero)):
             st.markdown(f"**Objectif :** {item['objectif']}")
@@ -354,42 +354,42 @@ with edit_tab:
             st.success("Séance mise à jour.")
             st.rerun()
 
-st.divider()
-delete_state_key = f"confirm_delete_ped_{activite}_{numero}"
-if st.button(
-    "🗑️ Supprimer cette séance",
-    use_container_width=True,
-    key=f"delete_ped_{activite}_{numero}"
-):
-    st.session_state[delete_state_key] = True
+    st.divider()
+    delete_state_key = f"confirm_delete_ped_{activite}_{numero}"
+    if st.button(
+        "🗑️ Supprimer cette séance",
+        use_container_width=True,
+        key=f"delete_ped_{activite}_{numero}"
+    ):
+        st.session_state[delete_state_key] = True
 
-if st.session_state.get(delete_state_key):
-    st.warning(
-        f"Confirmer la suppression de la séance {numero} — {s['titre']} ? "
-        "Les notes et évaluations déjà enregistrées seront conservées."
-    )
-    dc1, dc2 = st.columns(2)
-    if dc1.button(
-        "Oui, supprimer",
-        type="primary",
-        use_container_width=True,
-        key=f"confirm_delete_yes_{activite}_{numero}"
-    ):
-        execute(
-            "INSERT INTO pedagogie_suppressions(activite,numero) VALUES(?,?) "
-            "ON CONFLICT(activite,numero) DO NOTHING",
-            (activite, numero)
+    if st.session_state.get(delete_state_key):
+        st.warning(
+            f"Confirmer la suppression de la séance {numero} — {s['titre']} ? "
+            "Les notes et évaluations déjà enregistrées seront conservées."
         )
-        st.session_state.pop(delete_state_key, None)
-        st.success("Séance supprimée.")
-        st.rerun()
-    if dc2.button(
-        "Annuler",
-        use_container_width=True,
-        key=f"confirm_delete_no_{activite}_{numero}"
-    ):
-        st.session_state.pop(delete_state_key, None)
-        st.rerun()
+        dc1, dc2 = st.columns(2)
+        if dc1.button(
+            "Oui, supprimer",
+            type="primary",
+            use_container_width=True,
+            key=f"confirm_delete_yes_{activite}_{numero}"
+        ):
+            execute(
+                "INSERT INTO pedagogie_suppressions(activite,numero) VALUES(?,?) "
+                "ON CONFLICT(activite,numero) DO NOTHING",
+                (activite, numero)
+            )
+            st.session_state.pop(delete_state_key, None)
+            st.success("Séance supprimée.")
+            st.rerun()
+        if dc2.button(
+            "Annuler",
+            use_container_width=True,
+            key=f"confirm_delete_no_{activite}_{numero}"
+        ):
+            st.session_state.pop(delete_state_key, None)
+            st.rerun()
 
     if st.button("↩️ Restaurer cette séance à la version proposée", use_container_width=True):
         d = DEFAULT_CYCLES[activite][numero - 1]
