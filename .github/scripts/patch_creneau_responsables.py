@@ -11,7 +11,7 @@ anchor = "        return source\n\n    def _suaps_compile"
 if anchor not in s:
     raise SystemExit("sitecustomize insertion anchor not found")
 
-feature = r'''        # CRÉNEAUX RESPONSABLES V1
+feature = r"""        # CRÉNEAUX RESPONSABLES V1
         # Une table séparée évite de modifier la structure historique de "offres".
         if "CREATE TABLE IF NOT EXISTS offre_responsables" not in source:
             _resp_anchor = "def rows(sql,p=()):"
@@ -109,7 +109,7 @@ def rows(sql,p=()):'''
         if _delete_offer in source and 'DELETE FROM offre_responsables WHERE offre_id' not in source:
             source = source.replace(_delete_offer, _delete_offer_new, 1)
 
-'''
+"""
 
 s = s.replace(anchor, feature + anchor, 1)
 p.write_text(s, encoding="utf-8")
