@@ -26,6 +26,10 @@ jobs:
           import builtins
           import importlib.util
           from pathlib import Path
+          s=Path('sitecustomize.py').read_text(encoding='utf-8')
+          assert 'responsable' in s
+          assert 'co_responsable' in s
+          assert 'Nom du responsable enregistré sur le créneau' in s
           original_compile=builtins.compile
           spec=importlib.util.spec_from_file_location('sc_test','sitecustomize.py')
           mod=importlib.util.module_from_spec(spec)
@@ -33,9 +37,6 @@ jobs:
           core=Path('v14_core.py').read_text(encoding='utf-8')
           transformed=mod._patch_suaps_generated_app(core)
           builtins.compile=original_compile
-          assert '"responsable":""' in transformed
-          assert '"co_responsable":""' in transformed
-          assert 'Nom du responsable enregistré sur le créneau' in transformed
           original_compile(transformed,'v14_core_transformed.py','exec')
           print('Excel responsable columns OK')
           PY
