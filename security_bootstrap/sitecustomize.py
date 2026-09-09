@@ -34,7 +34,7 @@ def _secure_generated_app(source):
     if "from psycopg_pool import ConnectionPool" not in source:
         source = source.replace(
             "import streamlit as st",
-            "import streamlit as st\nimport os\nimport re\nimport secrets\nimport time\ntry:\n    import psycopg\n    from psycopg.rows import dict_row\n    try:\n        from psycopg_pool import ConnectionPool\n    except Exception:\n        ConnectionPool=None\nexcept Exception:\n    psycopg=None\n    dict_row=None\n    ConnectionPool=None",
+            "import streamlit as st\nimport os\nimport re\nimport secrets\nimport hashlib\nimport time\ntry:\n    import psycopg\n    from psycopg.rows import dict_row\n    try:\n        from psycopg_pool import ConnectionPool\n    except Exception:\n        ConnectionPool=None\nexcept Exception:\n    psycopg=None\n    dict_row=None\n    ConnectionPool=None",
             1,
         )
 
@@ -243,6 +243,35 @@ AUTH_LOCK_SECONDS=max(60,_auth_env_int("AUTH_LOCK_SECONDS",300))
 STUDENT_SESSION_TIMEOUT=max(300,_auth_env_int("STUDENT_SESSION_TIMEOUT",3600))
 TEACHER_SESSION_TIMEOUT=max(300,_auth_env_int("TEACHER_SESSION_TIMEOUT",1800))
 
+STAFF_PASSWORD_ENV={
+    "Hervé":"STAFF_PASSWORD_HASH_HERVE",
+    "Luhpo":"STAFF_PASSWORD_HASH_LUHPO",
+    "Raphaël":"STAFF_PASSWORD_HASH_RAPHAEL",
+    "Dudu":"STAFF_PASSWORD_HASH_DUDU",
+    "Geoffrey":"STAFF_PASSWORD_HASH_GEOFFREY",
+    "Bernard":"STAFF_PASSWORD_HASH_BERNARD",
+    "Mathieu":"STAFF_PASSWORD_HASH_MATHIEU",
+    "Michel":"STAFF_PASSWORD_HASH_MICHEL",
+    "Stéphanie":"STAFF_PASSWORD_HASH_STEPHANIE",
+    "Yan-Erick":"STAFF_PASSWORD_HASH_YAN_ERICK",
+    "Patrick":"STAFF_PASSWORD_HASH_PATRICK",
+    "Sébastien":"STAFF_PASSWORD_HASH_SEBASTIEN",
+}
+
+def _staff_password_ok(name,entered):
+    _key=STAFF_PASSWORD_ENV.get(str(name or ""))
+    _stored=os.getenv(_key,"").strip() if _key else ""
+    if not _stored: return False
+    try:
+        _scheme,_iterations,_salt_hex,_digest_hex=_stored.split("$",3)
+        if _scheme!="pbkdf2_sha256": return False
+        _iterations=int(_iterations)
+        if _iterations<200000 or _iterations>1000000: return False
+        _derived=hashlib.pbkdf2_hmac("sha256",str(entered or "").encode("utf-8"),bytes.fromhex(_salt_hex),_iterations)
+        return secrets.compare_digest(_derived.hex(),_digest_hex)
+    except Exception:
+        return False
+
 def _auth_remaining(prefix):
     return max(0,int(float(st.session_state.get(prefix+"_lock_until") or 0)-time.time()))
 
@@ -340,9 +369,9 @@ def go(p): st.session_state.page=p; st.rerun()'''
         1,
     )
 
-    # Connexion enseignant : code partagé + choix nominatif du profil.
+    # Connexion enseignant : profil nominatif + mot de passe individuel.
     admin_login = '''def admin_login():
-    topbar(); hero("Accès enseignant","Un code commun, puis un profil nominatif pour savoir qui utilise l'application.","ESPACE SÉCURISÉ")
+    topbar(); hero("Accès enseignant","Choisissez votre profil puis saisissez votre mot de passe individuel.","ESPACE SÉCURISÉ")
     if st.session_state.get("admin_auth") and st.session_state.get("teacher_name"):
         _now=time.time(); _last=float(st.session_state.get("teacher_last_activity") or _now)
         if _now-_last<=TEACHER_SESSION_TIMEOUT:
@@ -362,13 +391,13 @@ def go(p): st.session_state.page=p; st.rerun()'''
             format_func=lambda p:f"{p['avatar']}  {p['nom']} — {'Enseignant + Administrateur' if p['nom'] in ('Sébastien','Geoffrey','Bernard') else ('Administrateur' if p['role']=='Admin' else 'Enseignant')}",
             key="teacher_identity_pick",
         )
-        _entered=st.text_input("Code enseignant commun",type="password",autocomplete="off")
+        _entered=st.text_input("Mot de passe individuel",type="password",autocomplete="current-password")
         _ok=st.form_submit_button("Accéder à l'espace enseignant",type="primary",use_container_width=True)
     if _ok:
         _remaining=_auth_remaining("teacher_login")
         if _remaining>0:
             st.error(f"Trop de tentatives. Réessaie dans {_remaining} seconde(s).")
-        elif secrets.compare_digest(_entered.strip(),_teacher_code):
+        elif _staff_password_ok(_person["nom"],_entered):
             _auth_ok("teacher_login")
             st.session_state.admin_auth=True
             st.session_state.teacher_name=_person["nom"]
@@ -378,7 +407,7 @@ def go(p): st.session_state.page=p; st.rerun()'''
             go("Administration")
         else:
             _auth_fail("teacher_login")
-            st.error("Code enseignant incorrect.")
+            st.error("Mot de passe incorrect.")
     if st.button("← Accueil",key="admin_login_home"): go("Accueil")
 
 '''
