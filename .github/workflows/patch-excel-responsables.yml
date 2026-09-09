@@ -1,0 +1,49 @@
+name: Patch colonnes responsable Excel
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-excel-responsables.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch modele Excel
+        run: python .github/scripts/patch_excel_responsables.py
+      - name: Syntax check
+        run: python -S -m py_compile sitecustomize.py .github/scripts/patch_excel_responsables.py
+      - name: Static check
+        run: |
+          python -S - <<'PY'
+          import builtins
+          import importlib.util
+          from pathlib import Path
+          original_compile=builtins.compile
+          spec=importlib.util.spec_from_file_location('sc_test','sitecustomize.py')
+          mod=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          core=Path('v14_core.py').read_text(encoding='utf-8')
+          transformed=mod._patch_suaps_generated_app(core)
+          builtins.compile=original_compile
+          assert '"responsable":""' in transformed
+          assert '"co_responsable":""' in transformed
+          assert 'Nom du responsable enregistré sur le créneau' in transformed
+          original_compile(transformed,'v14_core_transformed.py','exec')
+          print('Excel responsable columns OK')
+          PY
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add sitecustomize.py
+          git diff --cached --quiet && exit 0
+          git commit -m 'Ajoute responsable et co-responsable au modèle Excel'
+          git push
