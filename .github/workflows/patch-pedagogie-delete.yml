@@ -1,0 +1,196 @@
+name: Patch suppression séances pédagogiques
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-pedagogie-delete.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ajouter la suppression persistante des séances
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('pages/02_📚_Pédagogie.py')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          # 1) Mémoriser les séances supprimées pour éviter que les cycles par défaut
+          #    ne les recréent au prochain chargement de la page.
+          marker = '    for activite, seances in DEFAULT_CYCLES.items():\n'
+          insert = '''    execute("""
+              CREATE TABLE IF NOT EXISTS pedagogie_suppressions(
+                  activite TEXT NOT NULL,
+                  numero INTEGER NOT NULL,
+                  PRIMARY KEY(activite, numero)
+              )
+          """)
+          suppressions = {
+              (r["activite"], r["numero"])
+              for r in query_rows("SELECT activite, numero FROM pedagogie_suppressions")
+          }
+
+          '''
+          if 'CREATE TABLE IF NOT EXISTS pedagogie_suppressions' not in text:
+              if marker not in text:
+                  raise SystemExit('Marqueur init_pedagogy introuvable')
+              text = text.replace(marker, insert + marker, 1)
+
+          loop_marker = '        for numero, data in enumerate(seances, start=1):\n            titre, objectif, contenu, situation, criteres, duree, materiel, codes = data\n'
+          loop_replacement = '        for numero, data in enumerate(seances, start=1):\n            if (activite, numero) in suppressions:\n                continue\n            titre, objectif, contenu, situation, criteres, duree, materiel, codes = data\n'
+          if 'if (activite, numero) in suppressions:' not in text:
+              if loop_marker not in text:
+                  raise SystemExit('Boucle des séances par défaut introuvable')
+              text = text.replace(loop_marker, loop_replacement, 1)
+
+          # 2) Ne proposer dans la liste que les séances réellement présentes.
+          old_select = '''activite = st.selectbox("Choisir l'activité", list(DEFAULT_CYCLES.keys()), format_func=lambda x: DISPLAY[x])
+          nb_seances = len(DEFAULT_CYCLES[activite])
+          numero = st.selectbox("Séance", range(1, nb_seances + 1), format_func=lambda n: f"Séance {n}")
+
+          rows = query_rows("SELECT * FROM pedagogie_seances WHERE activite=? AND numero=?", (activite, numero))
+          if not rows:
+              st.error("Séance introuvable.")
+              st.stop()
+          s = rows[0]
+          '''
+          new_select = '''activite = st.selectbox("Choisir l'activité", list(DEFAULT_CYCLES.keys()), format_func=lambda x: DISPLAY[x])
+
+          deleted_rows = query_rows(
+              "SELECT numero FROM pedagogie_suppressions WHERE activite=? ORDER BY numero",
+              (activite,)
+          )
+          if deleted_rows:
+              with st.expander(f"🗑️ Séances supprimées ({len(deleted_rows)})"):
+                  deleted_numbers = [int(r["numero"]) for r in deleted_rows]
+                  restore_num = st.selectbox(
+                      "Séance à restaurer",
+                      deleted_numbers,
+                      format_func=lambda n: f"Séance {n} — {DEFAULT_CYCLES[activite][n - 1][0]}",
+                      key=f"restore_deleted_{activite}"
+                  )
+                  if st.button("↩️ Restaurer cette séance", use_container_width=True, key=f"restore_deleted_btn_{activite}"):
+                      execute(
+                          "DELETE FROM pedagogie_suppressions WHERE activite=? AND numero=?",
+                          (activite, restore_num)
+                      )
+                      st.success(f"Séance {restore_num} restaurée.")
+                      st.rerun()
+
+          available_sessions = query_rows(
+              "SELECT numero, titre FROM pedagogie_seances WHERE activite=? ORDER BY numero",
+              (activite,)
+          )
+          nb_seances = len(available_sessions)
+          if not available_sessions:
+              st.warning("Toutes les séances de cette activité ont été supprimées. Tu peux en restaurer une dans la rubrique ci-dessus.")
+              st.stop()
+
+          session_numbers = [int(r["numero"]) for r in available_sessions]
+          session_titles = {int(r["numero"]): r["titre"] for r in available_sessions}
+          numero = st.selectbox(
+              "Séance",
+              session_numbers,
+              format_func=lambda n: f"Séance {n} — {session_titles[n]}"
+          )
+          session_position = session_numbers.index(numero) + 1
+
+          rows = query_rows("SELECT * FROM pedagogie_seances WHERE activite=? AND numero=?", (activite, numero))
+          if not rows:
+              st.error("Séance introuvable.")
+              st.stop()
+          s = rows[0]
+          '''
+          if 'available_sessions = query_rows(' not in text:
+              if old_select not in text:
+                  raise SystemExit('Bloc de sélection de séance introuvable')
+              text = text.replace(old_select, new_select, 1)
+
+          text = text.replace(
+              'c1.metric("Progression", f"{numero}/{nb_seances}")',
+              'c1.metric("Progression", f"{session_position}/{nb_seances}")',
+              1
+          )
+
+          # 3) Ajouter une suppression en deux temps dans l'onglet Modifier.
+          restore_marker = '    if st.button("↩️ Restaurer cette séance à la version proposée", use_container_width=True):\n'
+          delete_block = '''    st.divider()
+              delete_state_key = f"confirm_delete_ped_{activite}_{numero}"
+              if st.button(
+                  "🗑️ Supprimer cette séance",
+                  use_container_width=True,
+                  key=f"delete_ped_{activite}_{numero}"
+              ):
+                  st.session_state[delete_state_key] = True
+
+              if st.session_state.get(delete_state_key):
+                  st.warning(
+                      f"Confirmer la suppression de la séance {numero} — {s['titre']} ? "
+                      "Les notes et évaluations déjà enregistrées ne seront pas supprimées."
+                  )
+                  dc1, dc2 = st.columns(2)
+                  if dc1.button(
+                      "Oui, supprimer définitivement",
+                      type="primary",
+                      use_container_width=True,
+                      key=f"confirm_delete_yes_{activite}_{numero}"
+                  ):
+                      execute(
+                          "INSERT INTO pedagogie_suppressions(activite,numero) VALUES(?,?) "
+                          "ON CONFLICT(activite,numero) DO NOTHING",
+                          (activite, numero)
+                      )
+                      execute("DELETE FROM pedagogie_liens WHERE activite=? AND numero=?", (activite, numero))
+                      execute("DELETE FROM pedagogie_seances WHERE activite=? AND numero=?", (activite, numero))
+                      st.session_state.pop(delete_state_key, None)
+                      st.success("Séance supprimée.")
+                      st.rerun()
+                  if dc2.button(
+                      "Annuler",
+                      use_container_width=True,
+                      key=f"confirm_delete_no_{activite}_{numero}"
+                  ):
+                      st.session_state.pop(delete_state_key, None)
+                      st.rerun()
+
+          '''
+          if 'confirm_delete_ped_' not in text:
+              if restore_marker not in text:
+                  raise SystemExit('Bouton de restauration introuvable')
+              text = text.replace(restore_marker, delete_block + restore_marker, 1)
+
+          # Une restauration explicite annule aussi une éventuelle marque de suppression.
+          restore_body_marker = '    if st.button("↩️ Restaurer cette séance à la version proposée", use_container_width=True):\n        d = DEFAULT_CYCLES[activite][numero - 1]\n'
+          restore_body_replacement = '    if st.button("↩️ Restaurer cette séance à la version proposée", use_container_width=True):\n        execute("DELETE FROM pedagogie_suppressions WHERE activite=? AND numero=?", (activite, numero))\n        d = DEFAULT_CYCLES[activite][numero - 1]\n'
+          if restore_body_marker in text:
+              text = text.replace(restore_body_marker, restore_body_replacement, 1)
+
+          if text == original:
+              raise SystemExit('Aucune modification à appliquer')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Vérifier la syntaxe Python
+        run: python -m py_compile 'pages/02_📚_Pédagogie.py'
+
+      - name: Commit et push
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add 'pages/02_📚_Pédagogie.py'
+          git commit -m 'Ajoute la suppression persistante des séances pédagogiques'
+          git push origin HEAD:main
