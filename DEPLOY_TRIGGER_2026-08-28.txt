@@ -1,1 +1,2 @@
 Relance du déploiement automatique Render après réintégration Semestres 1/2 2026-2027 et import/export CSV.
+Renforcement sécurité étudiant/enseignant : identifiant obligatoire, anti-bruteforce, expiration de session et cloisonnement des groupes.
