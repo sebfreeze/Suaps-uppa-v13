@@ -1,0 +1,116 @@
+name: Fix placement suppression pédagogie
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-pedagogie-delete-layout.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Replacer suppression et restauration dans Modifier
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('pages/02_📚_Pédagogie.py')
+          text = path.read_text(encoding='utf-8')
+
+          start_marker = '\nst.divider()\ndelete_state_key = f"confirm_delete_ped_{activite}_{numero}"\n'
+          end_marker = '\nwith eval_tab:\n'
+          start = text.find(start_marker)
+          if start < 0:
+              raise SystemExit('Bloc suppression actuel introuvable')
+          start += 1
+          end = text.find(end_marker, start)
+          if end < 0:
+              raise SystemExit('Onglet evaluation introuvable')
+
+          lines = [
+              '    st.divider()',
+              '    delete_state_key = f"confirm_delete_ped_{activite}_{numero}"',
+              '    if st.button(',
+              '        "🗑️ Supprimer cette séance",',
+              '        use_container_width=True,',
+              '        key=f"delete_ped_{activite}_{numero}"',
+              '    ):',
+              '        st.session_state[delete_state_key] = True',
+              '',
+              '    if st.session_state.get(delete_state_key):',
+              '        st.warning(',
+              '            f"Confirmer la suppression de la séance {numero} — {s[\'titre\']} ? "',
+              '            "Les notes et évaluations déjà enregistrées seront conservées."',
+              '        )',
+              '        dc1, dc2 = st.columns(2)',
+              '        if dc1.button(',
+              '            "Oui, supprimer",',
+              '            type="primary",',
+              '            use_container_width=True,',
+              '            key=f"confirm_delete_yes_{activite}_{numero}"',
+              '        ):',
+              '            execute(',
+              '                "INSERT INTO pedagogie_suppressions(activite,numero) VALUES(?,?) "',
+              '                "ON CONFLICT(activite,numero) DO NOTHING",',
+              '                (activite, numero)',
+              '            )',
+              '            st.session_state.pop(delete_state_key, None)',
+              '            st.success("Séance supprimée.")',
+              '            st.rerun()',
+              '        if dc2.button(',
+              '            "Annuler",',
+              '            use_container_width=True,',
+              '            key=f"confirm_delete_no_{activite}_{numero}"',
+              '        ):',
+              '            st.session_state.pop(delete_state_key, None)',
+              '            st.rerun()',
+              '',
+              '    if st.button("↩️ Restaurer cette séance à la version proposée", use_container_width=True):',
+              '        d = DEFAULT_CYCLES[activite][numero - 1]',
+              '        titre0, objectif0, contenu0, situation0, criteres0, duree0, materiel0, codes0 = d',
+              '        execute("""',
+              '            UPDATE pedagogie_seances',
+              '            SET titre=?, objectif=?, contenu=?, situation=?, criteres=?, duree=?, materiel=?',
+              '            WHERE activite=? AND numero=?',
+              '        """, (titre0, objectif0, contenu0, situation0, criteres0, duree0, materiel0, activite, numero))',
+              '        execute("DELETE FROM pedagogie_liens WHERE activite=? AND numero=?", (activite, numero))',
+              '        if codes0:',
+              '            placeholders = ",".join(["?"] * len(codes0))',
+              '            comps0 = query_rows(f"SELECT id FROM competences WHERE activite=? AND code IN ({placeholders})", (activite, *codes0))',
+              '            for comp in comps0:',
+              '                execute("INSERT INTO pedagogie_liens(activite,numero,competence_id) VALUES(?,?,?) ON CONFLICT(activite,numero,competence_id) DO NOTHING", (activite, numero, comp["id"]))',
+              '        st.success("Version proposée restaurée.")',
+              '        st.rerun()',
+              '',
+          ]
+          replacement = '\n'.join(lines)
+          text = text[:start] + replacement + text[end:]
+
+          old_cycle = '    cycle_rows = query_rows("SELECT * FROM pedagogie_seances WHERE activite=? ORDER BY numero", (activite,))\n'
+          new_cycle = '    cycle_rows = [item for item in query_rows("SELECT * FROM pedagogie_seances WHERE activite=? ORDER BY numero", (activite,)) if int(item["numero"]) not in deleted_numbers]\n'
+          if old_cycle in text:
+              text = text.replace(old_cycle, new_cycle, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Vérifier la syntaxe Python
+        run: python -m py_compile 'pages/02_📚_Pédagogie.py'
+
+      - name: Commit et push
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add 'pages/02_📚_Pédagogie.py'
+          git commit -m 'Place la suppression dans onglet Modifier'
+          git push origin HEAD:main
