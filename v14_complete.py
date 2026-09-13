@@ -137,6 +137,8 @@ source = source.replace("""                try: exe("INSERT INTO acquisitions(ut
                 st.success("Compétence mise à jour.")""")
 
 source = source.replace('pages={"Accueil":accueil,"Famille":famille,"Connexion":connexion,"Mon espace":espace,"Inscriptions":inscriptions,"Planning":planning,"Présence":presence,"Résultats":resultats,"Administration":admin}','pages={"Accueil":accueil,"Infos Live":infos_live,"Famille":famille,"Connexion":connexion,"Mon espace":espace,"Inscriptions":inscriptions,"Planning":planning,"Présence":presence,"Résultats":resultats,"Administration":admin}')
+from pedagogie_integration import patch_app_source as _patch_pedagogy_source
+source = _patch_pedagogy_source(source)
 '''
 
 needle='exec(compile(source, str(source_path), "exec"), globals(), globals())'
