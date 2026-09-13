@@ -1,0 +1,47 @@
+name: Patch live pédagogie
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-live-pedagogie.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/ressources-pedagogiques
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Brancher le module sur le point d'entrée Render
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('v14_complete.py')
+          source = path.read_text(encoding='utf-8')
+          hook = "from pedagogie_integration import patch_app_source as _patch_pedagogy_source\nsource = _patch_pedagogy_source(source)"
+          if hook not in source:
+              marker = "\n'''\n\nneedle='exec(compile(source"
+              if marker not in source:
+                  raise SystemExit('Point d’injection v14_complete.py introuvable')
+              source = source.replace(marker, "\n" + hook + "\n'''\n\nneedle='exec(compile(source", 1)
+              path.write_text(source, encoding='utf-8')
+          PY
+      - name: Vérifier syntaxe et tests
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m py_compile v14_complete.py pedagogie_resources.py pedagogie_seed.py pedagogie_integration.py
+          python -m pytest tests/test_pedagogie_resources.py tests/test_pedagogie_seed.py tests/test_pedagogie_integration.py -v
+      - name: Commit du branchement live
+        run: |
+          if git diff --quiet -- v14_complete.py; then exit 0; fi
+          git config user.name "SUAPS automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add v14_complete.py
+          git commit -m "fix: integrate pedagogy into Render live entrypoint"
+          git push origin HEAD:feature/ressources-pedagogiques
