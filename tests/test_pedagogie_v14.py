@@ -2,7 +2,12 @@ import os
 
 import pytest
 
-from pedagogie_v14 import QmarkConnection, create_v14_session, resource_connection_factory
+from pedagogie_v14 import (
+    QmarkConnection,
+    create_v14_session,
+    init_v14_pedagogy,
+    resource_connection_factory,
+)
 
 
 class FakeRaw:
@@ -33,6 +38,33 @@ def test_resource_connection_factory_uses_sqlite_without_database_url(monkeypatc
     factory, use_postgres = resource_connection_factory(lambda: marker)
     assert use_postgres is False
     assert factory() is marker
+
+
+def test_init_v14_pedagogy_uses_detected_backend_for_seance_migration(monkeypatch):
+    legacy_factory = lambda: object()
+    postgres_factory = lambda: object()
+    calls = []
+
+    monkeypatch.setattr(
+        "pedagogie_v14.resource_connection_factory",
+        lambda factory: (postgres_factory, True),
+    )
+    monkeypatch.setattr(
+        "pedagogie_v14.resources.init_pedagogy_schema",
+        lambda factory, use_postgres: calls.append(("schema", factory, use_postgres)),
+    )
+    monkeypatch.setattr(
+        "pedagogie_v14.seed_official_resources",
+        lambda factory, use_postgres: calls.append(("seed", factory, use_postgres)),
+    )
+    monkeypatch.setattr(
+        "pedagogie_v14.resources.ensure_seance_resource_column",
+        lambda factory, use_postgres: calls.append(("seances", factory, use_postgres)),
+    )
+
+    init_v14_pedagogy(legacy_factory)
+
+    assert calls[-1] == ("seances", postgres_factory, True)
 
 
 def test_create_v14_session_resolves_offer_and_links_resource():
