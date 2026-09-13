@@ -75,8 +75,8 @@ def init_v14_pedagogy(sqlite_factory) -> tuple[object, bool]:
     factory, use_postgres = resource_connection_factory(sqlite_factory)
     resources.init_pedagogy_schema(factory, use_postgres)
     seed_official_resources(factory, use_postgres)
-    # Les séances live V14 restent dans la base historique SQLite.
-    resources.ensure_seance_resource_column(sqlite_factory, False)
+    # La migration de seances doit utiliser le backend réellement détecté.
+    resources.ensure_seance_resource_column(factory, use_postgres)
     return factory, use_postgres
 
 
