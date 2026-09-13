@@ -58,6 +58,8 @@ Chaque séance comprend au minimum :
 
 **Surf** : sécurité/lecture du milieu → rame → passage de barre → take-off → mise en situation et autonomie.
 
+Chaque séance officielle possède une clé stable unique, par exemple `natation-s01`, afin que l’amorçage puisse être relancé sans créer de doublons.
+
 ## 4. Expérience utilisateur
 
 ### 4.1 Écran principal
@@ -98,16 +100,19 @@ Le formulaire comporte :
 - fichier PDF/document facultatif
 - lien externe facultatif
 - visibilité étudiants oui/non
+- code de modification choisi par l’auteur
 
 Les vidéos sont stockées sous forme de liens, pas comme fichiers vidéo.
 
 ### 4.4 Modification et suppression
 
-L’application n’ayant pas encore de comptes enseignants individuels, l’auteur déclaré ne constitue pas une identité forte. Pour respecter la règle « l’auteur modifie/supprime sa ressource » sans créer immédiatement un système de comptes, chaque ressource enseignant reçoit un `code de modification` choisi à la création et stocké uniquement sous forme hachée.
+L’application n’ayant pas encore de comptes enseignants individuels, le nom d’auteur sert uniquement à l’attribution et ne constitue pas une identité forte. Pour respecter la règle « l’auteur modifie/supprime sa ressource » sans créer immédiatement un système de comptes, chaque ressource enseignant possède un `code de modification` choisi à la création.
 
-- modification/suppression : nom de l’auteur + code de modification
+- modification/suppression : code de modification de la ressource requis
 - administrateur SUAPS : possibilité de modifier/supprimer toute ressource via un code administrateur dédié
 - ressources officielles : modifiables uniquement en mode administrateur
+
+Le code auteur est stocké sous forme dérivée avec PBKDF2-HMAC-SHA256 et sel aléatoire. Le code administrateur n’est pas stocké en base : il provient du secret `PEDAGOGY_ADMIN_CODE` dans l’environnement / `st.secrets`.
 
 Cette solution est transitoire jusqu’à l’éventuelle mise en place de comptes enseignants individuels.
 
@@ -118,11 +123,12 @@ Ajouter une table `ressources_pedagogiques` compatible PostgreSQL et SQLite.
 Champs principaux :
 
 - `id`
+- `resource_key` — clé stable unique pour les ressources officielles, nulle pour les ressources ordinaires
 - `activite`
 - `type_ressource`
 - `titre`
 - `description`
-- `contenu_json` ou texte structuré pour les séances
+- `contenu_json` — JSON sérialisé dans un champ texte
 - `auteur`
 - `auteur_code_hash`
 - `date_creation`
@@ -135,7 +141,15 @@ Champs principaux :
 - `taille_fichier`
 - `fichier_data`
 
-Le contenu détaillé des séances peut être stocké en JSON sérialisé dans un champ texte afin de conserver la compatibilité simple entre PostgreSQL et SQLite.
+Contraintes :
+
+- `resource_key` unique lorsqu’il est renseigné
+- `visible_etudiants` par défaut à 0
+- `officiel_suaps` par défaut à 0
+
+Le champ `fichier_data` utilise `BYTEA` sous PostgreSQL et `BLOB` sous SQLite. Le code d’initialisation choisit le type adapté au backend actif.
+
+Ajouter aussi un champ nullable `ressource_id` à la table `seances` pour conserver la provenance pédagogique d’une séance créée depuis une ressource. L’ajout doit être idempotent et compatible avec les bases déjà existantes.
 
 ## 6. Stockage des fichiers
 
@@ -143,10 +157,11 @@ Le service Render est actuellement sur un plan sans disque persistant ; les fich
 
 Pour la V1 :
 
-- les PDF et documents sont stockés directement dans la base de données
-- taille maximale recommandée : 5 Mo par fichier
-- types acceptés au minimum : PDF, DOCX, PPTX, XLSX et images usuelles si besoin pédagogique
-- les vidéos restent des liens externes
+- les documents sont stockés directement dans la base de données
+- taille maximale stricte : 5 Mo par fichier
+- extensions autorisées : `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.jpg`, `.jpeg`, `.png`
+- le type MIME doit être cohérent avec l’extension
+- les vidéos restent des liens externes HTTP/HTTPS
 
 Une migration vers un stockage objet externe pourra être faite ultérieurement si le volume devient important.
 
@@ -160,7 +175,7 @@ L’enseignant choisit :
 - groupe
 - activité
 
-Le thème est prérempli avec le titre de la ressource et la séance créée conserve un lien logique vers la ressource source si un champ `ressource_id` est ajouté à `seances`.
+Le thème est prérempli avec le titre de la ressource et `ressource_id` référence la ressource source.
 
 La séance créée fonctionne ensuite normalement avec :
 
@@ -169,11 +184,13 @@ La séance créée fonctionne ensuite normalement avec :
 - évaluations
 - suivi de groupe
 
+La duplication d’une ressource pédagogique crée une nouvelle ressource enseignant indépendante ; elle ne modifie jamais l’original officiel.
+
 ## 8. Accès étudiants
 
 En mode étudiant, seules les ressources avec `visible_etudiants = 1` sont visibles.
 
-L’espace étudiant présente uniquement des ressources de consultation :
+Le portail étudiant reçoit une section `📚 Ressources` présentant uniquement des ressources de consultation :
 
 - titre
 - activité
@@ -185,38 +202,42 @@ Aucune création, modification ou suppression n’est autorisée côté étudian
 
 ## 9. Sécurité et validation
 
-- vérifier le type MIME et l’extension des fichiers
-- limiter la taille des fichiers
+- vérifier extension, type MIME et taille avant insertion
+- limiter strictement les fichiers à 5 Mo
 - rejeter les liens non HTTP/HTTPS
 - échapper les contenus affichés lorsque nécessaire
 - ne jamais utiliser le nom de fichier fourni comme chemin serveur
-- stocker les codes de modification sous forme hachée avec sel
+- dériver les codes auteurs avec PBKDF2-HMAC-SHA256 et sel aléatoire
+- lire le code administrateur depuis `PEDAGOGY_ADMIN_CODE`
 - protéger les ressources officielles contre les écritures non administrateur
 - ne pas exposer directement les données binaires hors action explicite de téléchargement
+- ne jamais journaliser les codes auteur ou administrateur
 
 ## 10. Erreurs et cas limites
 
 Le module doit gérer proprement :
 
 - ressource introuvable
-- fichier trop volumineux
-- type de fichier non autorisé
+- fichier supérieur à 5 Mo
+- type de fichier non autorisé ou incohérent
 - lien invalide
 - code de modification incorrect
+- code administrateur absent ou incorrect
 - absence de PostgreSQL avec repli SQLite
 - erreur de lecture/écriture du fichier en base
 - tentative de suppression d’une ressource officielle sans droit admin
+- réamorçage des contenus officiels déjà présents
 
 Les erreurs doivent être affichées avec des messages utilisateurs simples et sans informations techniques sensibles.
 
 ## 11. Structure du code
 
-Éviter d’ajouter tout le module dans `app.py`, déjà volumineux. Prévoir au minimum un module séparé, par exemple :
+Éviter d’ajouter tout le module dans `app.py`, déjà volumineux. Prévoir au minimum :
 
-- `pedagogie_resources.py` : logique UI et actions du module
+- `pedagogie_resources.py` : logique UI, validation et actions du module
 - `pedagogie_seed.py` : contenu des 55 séances officielles et initialisation idempotente
 
-Les fonctions d’accès aux données existantes (`qdf`, `exec_sql`, `get_conn`) peuvent être réutilisées ou déplacées progressivement vers un module commun si nécessaire, sans refactorisation générale hors périmètre.
+Les fonctions d’accès aux données existantes (`qdf`, `exec_sql`, `get_conn`) peuvent être réutilisées. Si un import circulaire apparaît, extraire seulement les helpers nécessaires dans un petit module de données commun ; ne pas lancer une refactorisation générale hors périmètre.
 
 ## 12. Tests à prévoir
 
@@ -226,19 +247,24 @@ Tests fonctionnels minimaux :
 2. visibilité immédiate pour un autre enseignant
 3. modification avec bon code auteur
 4. refus avec mauvais code auteur
-5. suppression admin
+5. suppression avec code administrateur
 6. protection d’une ressource officielle
 7. partage / retrait côté étudiant
 8. upload et téléchargement d’un PDF
-9. rejet d’un fichier trop gros ou non autorisé
-10. création d’une séance depuis une ressource
-11. persistance après redéploiement via PostgreSQL
-12. fonctionnement local SQLite
-13. absence de doublons lors du réamorçage des 55 séances officielles
+9. rejet d’un fichier > 5 Mo
+10. rejet d’une extension ou d’un type MIME non autorisé
+11. création d’une séance depuis une ressource et conservation de `ressource_id`
+12. persistance après redéploiement via PostgreSQL
+13. fonctionnement local SQLite
+14. absence de doublons lors du réamorçage des 55 séances officielles
+15. duplication d’une séance officielle sans modification de l’original
+16. absence d’exposition du hash ou des codes dans l’interface
 
 ## 13. Déploiement
 
 Le service Render est configuré avec auto-déploiement sur la branche principale. Une fois les changements poussés sur `main`, le déploiement doit se déclencher automatiquement ; aucun déclenchement manuel supplémentaire n’est nécessaire sauf si l’auto-déploiement est désactivé côté Render.
+
+Le secret `PEDAGOGY_ADMIN_CODE` devra être configuré sur le service avant l’utilisation des fonctions administrateur du module.
 
 ## 14. Hors périmètre V1
 
