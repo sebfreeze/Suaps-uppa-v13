@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pedagogie_integration import SENTINEL, patch_app_source
 
 
@@ -59,3 +61,9 @@ def test_patch_adds_import_initialization_and_navigation():
 def test_patch_is_idempotent():
     patched = patch_app_source(SAMPLE)
     assert patch_app_source(patched) == patched
+
+
+def test_render_entrypoint_applies_pedagogy_patch():
+    entry = Path("v14_complete.py").read_text(encoding="utf-8")
+    assert "from pedagogie_integration import patch_app_source as _patch_pedagogy_source" in entry
+    assert "source = _patch_pedagogy_source(source)" in entry
