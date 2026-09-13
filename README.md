@@ -177,3 +177,25 @@ Cette version est prête à être déployée sur un hébergeur web.
 - Données persistantes sur une base PostgreSQL externe.
 - Compatible Streamlit Community Cloud.
 - URL publique configurable pour QR/NFC.
+
+## Version suivante — Ressources pédagogiques
+
+- Espace `Ressources pédagogiques` accessible aux enseignants et, en lecture seule, aux étudiants pour les ressources explicitement partagées.
+- 55 séances officielles SUAPS préchargées : Natation (10), Rugby (10), Sauvetage / SSA (10), Course à pied (10), Pelote basque (10) et Surf (5).
+- Ajout par les enseignants de séances, progressions, compétences/barèmes, documents et vidéos/liens.
+- Toute ressource enseignant est immédiatement visible par tous les enseignants ; le partage étudiant reste facultatif et désactivé par défaut.
+- Les documents PDF, DOCX, PPTX, XLSX et images usuelles sont limités à 5 Mo et stockés directement dans PostgreSQL/SQLite afin de survivre aux redéploiements Render.
+- Les vidéos sont enregistrées sous forme de liens HTTP/HTTPS et ne sont pas hébergées par l'application.
+- Chaque ressource enseignant possède un auteur et un code personnel de modification stocké sous forme PBKDF2-HMAC salée.
+- Les ressources officielles SUAPS sont protégées ; l'administration globale utilise une variable d'environnement dédiée.
+- Une ressource peut être dupliquée et transformée directement en séance de présence/QR-NFC grâce au lien `ressource_id`.
+
+Pour activer l'administration globale, définir uniquement dans les secrets de l'hébergeur :
+
+```text
+PEDAGOGY_ADMIN_CODE=<secret fort, distinct du code enseignant>
+```
+
+Ne jamais versionner la valeur réelle de `PEDAGOGY_ADMIN_CODE` dans GitHub. Si la variable n'est pas définie, les fonctions d'administration globale restent désactivées et les ressources enseignants continuent d'être gérées par leur auteur avec leur code personnel.
+
+Sur Render, le point d'entrée de production est `app_design_pedagogie.py`, qui conserve la couche visuelle V15 existante et injecte le module pédagogique avant l'exécution de l'application.
