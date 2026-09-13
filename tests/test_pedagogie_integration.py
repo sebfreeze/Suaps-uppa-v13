@@ -69,6 +69,7 @@ def famille():
     pass
 
 def admin():
+    topbar(); hero("Enseignant / Administration","Pilotage rapide des créneaux, présences et évaluations.","ESPACE ENSEIGNANT")
     sec=st.radio("Rubrique",["Tableau de bord","Créneaux","Présences","Évaluations","Évaluation /20","Compétences","Barèmes","Actualités"],horizontal=True,key="admin_section")
     if sec=="Tableau de bord":
         pass
@@ -105,14 +106,14 @@ def test_patch_is_idempotent():
     assert patch_app_source(patched) == patched
 
 
-def test_patch_supports_v14_live_architecture():
+def test_patch_supports_v14_live_architecture_without_breaking_admin_radio():
     patched = patch_app_source(V14_SAMPLE)
     assert SENTINEL in patched
     assert "from pedagogie_v14 import init_v14_pedagogy" in patched
     assert "init_v14_pedagogy(db)" in patched
-    assert '"Actualités","Ressources pédagogiques"' in patched
-    assert 'elif sec=="Ressources pédagogiques":' in patched
+    assert 'st.button("📚 Ressources pédagogiques"' in patched
     assert "render_v14_teacher_resources(st, db, rows, one, exe, ACTIVITES)" in patched
+    assert 'sec=st.radio("Rubrique",["Tableau de bord","Créneaux","Présences","Évaluations","Évaluation /20","Compétences","Barèmes","Actualités"]' in patched
     assert "def ressources_pedagogiques_etudiant():" in patched
     assert 'go("Ressources pédagogiques")' in patched
     assert '"Ressources pédagogiques":ressources_pedagogiques_etudiant' in patched
