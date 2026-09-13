@@ -42,6 +42,48 @@ elif menu == "Tableau de bord":
 '''
 
 
+V14_SAMPLE = '''import sqlite3
+import streamlit as st
+ACTIVITES=["Natation"]
+
+def db():
+    pass
+
+def init_db():
+    pass
+init_db()
+
+def rows(sql,p=()):
+    return []
+def one(sql,p=()):
+    return None
+def exe(sql,p=()):
+    return 1
+
+def accueil():
+    label_live="🔥 Infos Live"
+    if st.button(label_live,key="home_infos_live",type="primary"): go("Infos Live")
+    nav()
+
+def famille():
+    pass
+
+def admin():
+    sec=st.radio("Rubrique",["Tableau de bord","Créneaux","Présences","Évaluations","Évaluation /20","Compétences","Barèmes","Actualités"],horizontal=True,key="admin_section")
+    if sec=="Tableau de bord":
+        pass
+    elif sec=="Compétences":
+        pass
+    elif sec=="Barèmes":
+        pass
+    else:
+        st.markdown("### 📰 Gestion des Infos Live")
+    if st.button("← Accueil"): go("Accueil")
+
+pages={"Accueil":accueil,"Infos Live":infos_live,"Famille":famille,"Administration":admin}
+'''
+
+
 def test_patch_adds_import_initialization_and_navigation():
     patched = patch_app_source(SAMPLE)
     assert SENTINEL in patched
@@ -60,6 +102,24 @@ def test_patch_adds_import_initialization_and_navigation():
 
 def test_patch_is_idempotent():
     patched = patch_app_source(SAMPLE)
+    assert patch_app_source(patched) == patched
+
+
+def test_patch_supports_v14_live_architecture():
+    patched = patch_app_source(V14_SAMPLE)
+    assert SENTINEL in patched
+    assert "from pedagogie_v14 import init_v14_pedagogy" in patched
+    assert "init_v14_pedagogy(db)" in patched
+    assert '"Actualités","Ressources pédagogiques"' in patched
+    assert 'elif sec=="Ressources pédagogiques":' in patched
+    assert "render_v14_teacher_resources(st, db, rows, one, exe, ACTIVITES)" in patched
+    assert "def ressources_pedagogiques_etudiant():" in patched
+    assert 'go("Ressources pédagogiques")' in patched
+    assert '"Ressources pédagogiques":ressources_pedagogiques_etudiant' in patched
+
+
+def test_v14_patch_is_idempotent():
+    patched = patch_app_source(V14_SAMPLE)
     assert patch_app_source(patched) == patched
 
 
