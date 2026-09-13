@@ -111,6 +111,7 @@ def test_patch_supports_v14_live_architecture_without_breaking_admin_radio():
     assert SENTINEL in patched
     assert "from pedagogie_v14 import init_v14_pedagogy" in patched
     assert "init_v14_pedagogy(db)" in patched
+    assert "init_db()\n\ndef rows(sql,p=()):" in patched
     assert 'st.button("📚 Ressources pédagogiques"' in patched
     assert "render_v14_teacher_resources(st, db, rows, one, exe, ACTIVITES)" in patched
     assert 'sec=st.radio("Rubrique",["Tableau de bord","Créneaux","Présences","Évaluations","Évaluation /20","Compétences","Barèmes","Actualités"]' in patched
