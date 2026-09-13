@@ -4,6 +4,22 @@ from __future__ import annotations
 SENTINEL = "# --- pédagogie resources integration ---"
 
 
+def _insert_after_top_level_function(source: str, function_prefix: str, block: str) -> str:
+    """Insère un bloc après une fonction de niveau module sans modifier son voisinage."""
+    lines = source.splitlines(keepends=True)
+    start = next((i for i, line in enumerate(lines) if line.startswith(function_prefix)), None)
+    if start is None:
+        raise RuntimeError(f"Fonction d'injection introuvable : {function_prefix}")
+    end = start + 1
+    while end < len(lines):
+        line = lines[end]
+        if line.strip() and not line.startswith((" ", "\t")):
+            break
+        end += 1
+    lines.insert(end, block)
+    return "".join(lines)
+
+
 def _patch_v14_source(source: str) -> str:
     import_marker = "import streamlit as st\n"
     import_block = (
@@ -14,16 +30,13 @@ def _patch_v14_source(source: str) -> str:
         raise RuntimeError("Point d'injection imports V14 pédagogie introuvable.")
     source = source.replace(import_marker, import_block, 1)
 
-    init_marker = "init_db()\n\ndef rows(sql,p=()):"
-    init_block = (
-        "init_db()\n"
-        f"{SENTINEL}\n"
-        "init_v14_pedagogy(db)\n\n"
-        "def rows(sql,p=()):"
+    # Préserver volontairement `init_db()\n\ndef rows...` : sitecustomize.py l'utilise
+    # encore pour injecter les semestres/CSV sur le live historique.
+    source = _insert_after_top_level_function(
+        source,
+        "def exe(sql,p=()):",
+        f"{SENTINEL}\ninit_v14_pedagogy(db)\n\n",
     )
-    if init_marker not in source:
-        raise RuntimeError("Point d'initialisation V14 pédagogie introuvable.")
-    source = source.replace(init_marker, init_block, 1)
 
     home_marker = '    if st.button(label_live,key="home_infos_live",type="primary"): go("Infos Live")\n'
     home_block = (
