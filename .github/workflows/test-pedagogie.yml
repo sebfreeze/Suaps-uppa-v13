@@ -29,6 +29,6 @@ jobs:
       - name: Installer les dépendances de test
         run: python -m pip install -r requirements-dev.txt
       - name: Compiler les modules
-        run: python -m py_compile v14_complete.py pedagogie_resources.py pedagogie_seed.py pedagogie_integration.py app_design_pedagogie.py
+        run: python -m py_compile v14_complete.py pedagogie_resources.py pedagogie_seed.py pedagogie_integration.py pedagogie_v14.py app_design_pedagogie.py
       - name: Exécuter les tests
-        run: python -m pytest tests/test_pedagogie_resources.py tests/test_pedagogie_seed.py tests/test_pedagogie_integration.py -v
+        run: python -m pytest tests/test_pedagogie_resources.py tests/test_pedagogie_seed.py tests/test_pedagogie_integration.py tests/test_pedagogie_v14.py -v
