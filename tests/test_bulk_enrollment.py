@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from pathlib import Path
 
 import bulk_enrollment
 
@@ -122,3 +123,11 @@ def test_json_bridge_parses_private_runtime_payload(tmp_path):
     conn = open_db(path)
     assert conn.execute("SELECT COUNT(*) n FROM inscriptions WHERE statut='Inscrit'").fetchone()["n"] == 3
     conn.close()
+
+
+def test_live_core_wires_private_runtime_bulk_payload_without_embedded_students():
+    source = Path("v14_core.py").read_text(encoding="utf-8")
+    assert "apply_bulk_enrollment_json" in source
+    assert "SUAPS_BULK_ENROLL_JSON" in source
+    assert "681961" not in source
+    assert "703034" not in source
