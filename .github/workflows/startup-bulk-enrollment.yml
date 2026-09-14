@@ -1,0 +1,20 @@
+name: Startup bulk enrollment
+
+on:
+  push:
+    branches:
+      - ops/startup-bulk-enroll-20260914
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Startup bulk enrollment tests
+        run: python -m pytest -q tests/test_startup_bulk_enrollment.py
