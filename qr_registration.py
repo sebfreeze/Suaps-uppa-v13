@@ -27,6 +27,10 @@ def make_qr_png(data):
 
 def register_student_from_qr(db_factory, token, email, identifiant, modalite, *, use_postgres=False):
     """Register one student in the offer identified by the QR token."""
+    modalite = str(modalite or "").strip()
+    if modalite not in VALID_MODALITIES:
+        return "invalid_modality"
+
     conn = db_factory()
     try:
         cur = conn.cursor()
@@ -84,11 +88,18 @@ def register_student_from_qr(db_factory, token, email, identifiant, modalite, *,
         if capacity and registered >= capacity:
             conn.rollback()
             return "full"
-        cur.execute(
-            "INSERT INTO inscriptions(utilisateur_id,offre_id,modalite,statut,date_inscription) "
-            "VALUES(?,?,?,'Inscrit',?)",
-            (student["id"], offer["id"], modalite, datetime.now().isoformat(timespec="seconds")),
-        )
+        now = datetime.now().isoformat(timespec="seconds")
+        if existing:
+            cur.execute(
+                "UPDATE inscriptions SET modalite=?, statut='Inscrit', date_inscription=? WHERE id=?",
+                (modalite, now, existing["id"]),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO inscriptions(utilisateur_id,offre_id,modalite,statut,date_inscription) "
+                "VALUES(?,?,?,'Inscrit',?)",
+                (student["id"], offer["id"], modalite, now),
+            )
         conn.commit()
         return "ok"
     except Exception:
