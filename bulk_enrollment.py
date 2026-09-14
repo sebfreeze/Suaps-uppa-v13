@@ -6,6 +6,7 @@ supplied at runtime and are never committed to the repository.
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import unicodedata
 
 VALID_MODALITIES = {"UET", "UECF", "Non noté"}
@@ -178,3 +179,14 @@ def apply_bulk_enrollment(db_factory, payload, *, use_postgres=False):
         raise
     finally:
         conn.close()
+
+
+def apply_bulk_enrollment_json(db_factory, raw_payload, *, use_postgres=False):
+    """Parse a private runtime JSON payload and apply the batch safely."""
+    try:
+        payload = json.loads(str(raw_payload or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"status": "invalid_payload"}
+    if not isinstance(payload, dict):
+        return {"status": "invalid_payload"}
+    return apply_bulk_enrollment(db_factory, payload, use_postgres=use_postgres)
