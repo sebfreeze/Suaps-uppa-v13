@@ -1,0 +1,27 @@
+name: Manual course registration
+
+on:
+  push:
+    branches:
+      - feat/manual-course-registration
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Compile
+        run: python -m py_compile qr_registration.py v14_core.py
+      - name: Manual registration tests
+        run: python -m pytest -q tests/test_manual_registration.py
+      - name: Regression tests
+        run: python -m pytest -q
