@@ -115,6 +115,40 @@ def test_qr_registration_returns_duplicate_without_creating_second_registration(
     assert rows[0]['modalite'] == 'UECF'
 
 
+def test_qr_registration_reactivates_cancelled_registration(tmp_path):
+    qr = load_feature()
+    db_path = tmp_path / 'cancelled.sqlite'
+    seed_db(db_path)
+    conn = open_db(db_path)
+    student_id = conn.execute("SELECT id FROM utilisateurs WHERE email='paul@etu.univ-pau.fr'").fetchone()['id']
+    offer_id = conn.execute("SELECT id FROM offres WHERE inscription_token='tok-abc'").fetchone()['id']
+    conn.execute("INSERT INTO inscriptions(utilisateur_id,offre_id,modalite,statut,date_inscription) VALUES(?,?,?,'Annulé','2026-09-10T10:00:00')", (student_id, offer_id, 'UECF'))
+    conn.commit(); conn.close()
+
+    result = qr.register_student_from_qr(lambda: open_db(db_path), 'tok-abc', 'paul@etu.univ-pau.fr', '12345678', 'UET')
+
+    assert result == 'ok'
+    conn = open_db(db_path)
+    rows = conn.execute("SELECT modalite,statut FROM inscriptions WHERE utilisateur_id=? AND offre_id=?", (student_id, offer_id)).fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert dict(rows[0]) == {'modalite': 'UET', 'statut': 'Inscrit'}
+
+
+def test_qr_registration_rejects_unknown_modality(tmp_path):
+    qr = load_feature()
+    db_path = tmp_path / 'bad-modality.sqlite'
+    seed_db(db_path)
+
+    result = qr.register_student_from_qr(lambda: open_db(db_path), 'tok-abc', 'paul@etu.univ-pau.fr', '12345678', 'ADMIN')
+
+    assert result == 'invalid_modality'
+    conn = open_db(db_path)
+    count = conn.execute("SELECT COUNT(*) AS n FROM inscriptions").fetchone()['n']
+    conn.close()
+    assert count == 0
+
+
 def test_qr_registration_rejects_wrong_student_identifier(tmp_path):
     qr = load_feature()
     db_path = tmp_path / 'bad-ident.sqlite'
