@@ -16,11 +16,13 @@ def load_patcher():
     return module
 
 
+def live_like_source():
+    return '''import streamlit as st\nfrom qr_registration import make_qr_png, new_registration_token, register_student_from_qr, registration_url\n\n# QR_COURSE_REGISTRATION_V1\n\ndef admin():\n            o={"id":1}\n            with st.expander("📱 QR code d'inscription",expanded=False):\n                        st.caption("Renouveler le QR invalide immédiatement l'ancien code.")\n            with st.form("editslot"):\n                pass\n'''
+
+
 def test_patch_adds_manual_registration_import_and_teacher_controls():
     patcher = load_patcher()
-    source = '''import streamlit as st\nfrom qr_registration import make_qr_png, new_registration_token, register_student_from_qr, registration_url\n\n# QR_COURSE_REGISTRATION_V1\n\ndef admin():\n    o={"id":1}\n    with st.expander("📱 QR code d'inscription",expanded=False):\n        st.caption("Renouveler le QR invalide immédiatement l'ancien code.")\n    with st.form("editslot"):\n        pass\n'''
-
-    patched = patcher.patch_text(source)
+    patched = patcher.patch_text(live_like_source())
 
     assert 'register_student_manually' in patched
     assert 'search_students' in patched
@@ -33,7 +35,6 @@ def test_patch_adds_manual_registration_import_and_teacher_controls():
 
 def test_patch_is_idempotent():
     patcher = load_patcher()
-    source = '''import streamlit as st\nfrom qr_registration import make_qr_png, new_registration_token, register_student_from_qr, registration_url\n\n# QR_COURSE_REGISTRATION_V1\n\ndef admin():\n    o={"id":1}\n    with st.expander("📱 QR code d'inscription",expanded=False):\n        st.caption("Renouveler le QR invalide immédiatement l'ancien code.")\n    with st.form("editslot"):\n        pass\n'''
-    once = patcher.patch_text(source)
+    once = patcher.patch_text(live_like_source())
     twice = patcher.patch_text(once)
     assert once == twice
