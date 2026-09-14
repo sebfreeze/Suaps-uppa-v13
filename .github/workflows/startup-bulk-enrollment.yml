@@ -16,5 +16,9 @@ jobs:
           cache: pip
       - name: Install test dependencies
         run: python -m pip install -r requirements-dev.txt
+      - name: Compile
+        run: python -m py_compile startup_bulk_enrollment.py startup_bootstrap/sitecustomize.py bulk_enrollment.py
       - name: Startup bulk enrollment tests
         run: python -m pytest -q tests/test_startup_bulk_enrollment.py
+      - name: Full regression tests
+        run: python -m pytest -q
