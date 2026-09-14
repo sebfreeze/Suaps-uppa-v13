@@ -57,9 +57,9 @@ def seed(path):
         (offer_id, "Semestre 1 — 2026/2027"),
     )
     for ident, nom, prenom in [
-        ("100001", "DUPONT", "Lola"),
-        ("100002", "ARBIN", "Ismael"),
-        ("100003", "MAILLE", "Matthis"),
+        ("100001", "ALPHA", "Alice"),
+        ("100002", "BETA", "Bastien"),
+        ("100003", "GAMMA", "Chloe"),
     ]:
         conn.execute(
             "INSERT INTO utilisateurs(profil,nom,prenom,email,identifiant,actif) VALUES('Étudiant',?,?,?,?,1)",
@@ -125,9 +125,9 @@ def test_json_bridge_parses_private_runtime_payload(tmp_path):
     conn.close()
 
 
-def test_live_core_wires_private_runtime_bulk_payload_without_embedded_students():
+def test_live_core_wires_private_runtime_bulk_payload_without_embedded_payload():
     source = Path("v14_core.py").read_text(encoding="utf-8")
     assert "apply_bulk_enrollment_json" in source
     assert "SUAPS_BULK_ENROLL_JSON" in source
-    assert "681961" not in source
-    assert "703034" not in source
+    assert "PRIVATE_BULK_ENROLLMENT_BRIDGE_V1" in source
+    assert '"students": [' not in source
