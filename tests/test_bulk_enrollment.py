@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import bulk_enrollment
@@ -107,4 +108,17 @@ def test_bulk_enrollment_is_all_or_nothing_and_sets_modalities(tmp_path):
 
     conn = open_db(path)
     assert conn.execute("SELECT COUNT(*) n FROM inscriptions").fetchone()["n"] == 3
+    conn.close()
+
+
+def test_json_bridge_parses_private_runtime_payload(tmp_path):
+    path = tmp_path / "json.sqlite"
+    seed(path)
+    factory = lambda: open_db(path)
+
+    result = bulk_enrollment.apply_bulk_enrollment_json(factory, json.dumps(payload()))
+
+    assert result["status"] == "ok"
+    conn = open_db(path)
+    assert conn.execute("SELECT COUNT(*) n FROM inscriptions WHERE statut='Inscrit'").fetchone()["n"] == 3
     conn.close()
