@@ -29,7 +29,8 @@ def test_patch_adds_manual_registration_import_and_teacher_controls():
     assert '# MANUAL_COURSE_REGISTRATION_V1' in patched
     assert '➕ Ajouter un étudiant manuellement' in patched
     assert 'Rechercher par nom, e-mail ou numéro étudiant' in patched
-    assert 'register_student_manually(db,o["id"]' in patched
+    assert 'manual_result=register_student_manually(' in patched
+    assert 'db,o["id"],selected_student["id"],manual_modalite' in patched
     assert patched.index('➕ Ajouter un étudiant manuellement') < patched.index('with st.form("editslot")')
 
 
