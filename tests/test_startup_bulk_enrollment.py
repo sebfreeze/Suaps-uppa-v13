@@ -111,7 +111,9 @@ def test_startup_runner_noops_when_private_payload_is_absent():
     assert logs == []
 
 
-def test_security_bootstrap_invokes_startup_runner():
-    source = Path("security_bootstrap/sitecustomize.py").read_text(encoding="utf-8")
+def test_startup_bootstrap_invokes_runner_and_preserves_security_bootstrap():
+    source = Path("startup_bootstrap/sitecustomize.py").read_text(encoding="utf-8")
+    assert "security_bootstrap" in source
     assert "startup_bulk_enrollment" in source
-    assert "run_startup_bulk_enrollment" in source
+    assert "run_from_environment" in source
+    assert "SUAPS_BULK_ENROLL_JSON" not in source
