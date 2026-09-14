@@ -1,0 +1,54 @@
+name: QR course registration
+
+on:
+  push:
+    branches:
+      - feat/qr-course-registration
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feat/qr-course-registration
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Apply QR registration patch
+        run: python .github/scripts/patch_qr_course_registration.py
+
+      - name: Compile changed Python files
+        run: python -m py_compile v14_core.py qr_registration.py
+
+      - name: Run QR registration tests
+        run: python -m pytest -q tests/test_qr_registration.py
+
+      - name: Run regression tests
+        run: python -m pytest -q
+
+      - name: Commit patched live core
+        shell: bash
+        run: |
+          if git diff --quiet -- v14_core.py; then
+            echo "No patch changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add v14_core.py
+          git commit -m "feat: integrate QR course registration into live app"
+          git push origin HEAD:feat/qr-course-registration
