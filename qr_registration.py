@@ -1,4 +1,4 @@
-"""Secure helpers for SUAPS course registration from a QR code."""
+"""Secure helpers for SUAPS course registration."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -23,6 +23,124 @@ def make_qr_png(data):
     buffer = BytesIO()
     qrcode.make(str(data)).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def search_students(db_factory, query, limit=20):
+    """Find active student accounts by name, email or student number."""
+    query = str(query or "").strip()
+    if not query:
+        return []
+    try:
+        limit = max(1, min(int(limit), 50))
+    except (TypeError, ValueError):
+        limit = 20
+    pattern = f"%{query}%"
+    conn = db_factory()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, nom, prenom, email, identifiant FROM utilisateurs "
+            "WHERE profil='Étudiant' AND actif=1 AND ("
+            "lower(nom) LIKE lower(?) OR lower(prenom) LIKE lower(?) OR "
+            "lower(email) LIKE lower(?) OR lower(COALESCE(identifiant,'')) LIKE lower(?)"
+            ") ORDER BY nom, prenom LIMIT ?",
+            (pattern, pattern, pattern, pattern, limit),
+        )
+        result = []
+        for row in cur.fetchall():
+            try:
+                result.append({
+                    "id": row["id"],
+                    "nom": row["nom"],
+                    "prenom": row["prenom"],
+                    "email": row["email"],
+                    "identifiant": row["identifiant"],
+                })
+            except (TypeError, KeyError):
+                result.append({
+                    "id": row[0],
+                    "nom": row[1],
+                    "prenom": row[2],
+                    "email": row[3],
+                    "identifiant": row[4],
+                })
+        return result
+    finally:
+        conn.close()
+
+
+def register_student_manually(db_factory, offer_id, student_id, modalite, *, use_postgres=False):
+    """Register an active student selected by staff in a course offer."""
+    modalite = str(modalite or "").strip()
+    if modalite not in VALID_MODALITIES:
+        return "invalid_modality"
+
+    conn = db_factory()
+    try:
+        cur = conn.cursor()
+        if use_postgres:
+            cur.execute("SELECT id, capacite FROM offres WHERE id=? FOR UPDATE", (offer_id,))
+        else:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+            except Exception:
+                pass
+            cur.execute("SELECT id, capacite FROM offres WHERE id=?", (offer_id,))
+        offer = cur.fetchone()
+        if not offer:
+            conn.rollback()
+            return "invalid"
+
+        cur.execute(
+            "SELECT id FROM utilisateurs WHERE id=? AND profil='Étudiant' AND actif=1",
+            (student_id,),
+        )
+        student = cur.fetchone()
+        if not student:
+            conn.rollback()
+            return "unknown_student"
+
+        cur.execute(
+            "SELECT id, statut FROM inscriptions WHERE utilisateur_id=? AND offre_id=?",
+            (student["id"], offer["id"]),
+        )
+        existing = cur.fetchone()
+        if existing and existing["statut"] == "Inscrit":
+            conn.rollback()
+            return "duplicate"
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM inscriptions WHERE offre_id=? AND statut='Inscrit'",
+            (offer["id"],),
+        )
+        registered = int(cur.fetchone()["n"] or 0)
+        capacity = max(0, int(offer["capacite"] or 0))
+        if capacity and registered >= capacity:
+            conn.rollback()
+            return "full"
+
+        now = datetime.now().isoformat(timespec="seconds")
+        if existing:
+            cur.execute(
+                "UPDATE inscriptions SET modalite=?, statut='Inscrit', date_inscription=? WHERE id=?",
+                (modalite, now, existing["id"]),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO inscriptions(utilisateur_id,offre_id,modalite,statut,date_inscription) "
+                "VALUES(?,?,?,'Inscrit',?)",
+                (student["id"], offer["id"], modalite, now),
+            )
+        conn.commit()
+        return "ok"
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def register_student_from_qr(db_factory, token, email, identifiant, modalite, *, use_postgres=False):
