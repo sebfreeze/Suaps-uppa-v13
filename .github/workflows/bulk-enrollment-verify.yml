@@ -1,0 +1,24 @@
+name: Bulk enrollment final verification
+
+on:
+  push:
+    branches:
+      - ops/bulk-enroll-running-s1-20260914
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Compile
+        run: python -m py_compile bulk_enrollment.py v14_core.py
+      - name: Targeted tests
+        run: python -m pytest -q tests/test_bulk_enrollment.py
+      - name: Full regression tests
+        run: python -m pytest -q
