@@ -1,4 +1,4 @@
-"""Repair the legacy responsible/co-responsible UI injection when newer UI patches move its anchor."""
+"""Repair late-stage SUAPS source regressions caused by patch ordering."""
 import re
 
 STAFF_NAMES = [
@@ -10,7 +10,23 @@ STAFF_NAMES = [
 def repair_source(source):
     if not isinstance(source, str):
         return source
-    if "def admin():" not in source or "_resp_options" not in source:
+    if "def admin():" not in source:
+        return source
+
+    # Newer UI patches alter the admin radio before the legacy CSV patch runs.
+    # Restore the missing admin-only entry once the CSV/Excel block exists.
+    if (
+        "### 📥 Import CSV / Excel étudiants et inscriptions" in source
+        and '"Semestres & CSV"' not in source
+    ):
+        source = source.replace(
+            '"Actualités"],horizontal=True,key="admin_section")',
+            '"Actualités","Semestres & CSV"],horizontal=True,key="admin_section")',
+            1,
+        )
+
+    # Keep the existing responsable/co-responsable repair independent from CSV.
+    if "_resp_options" not in source:
         return source
     if '_resp_options=["— Non attribué —"]+_resp_names' in source:
         return source
