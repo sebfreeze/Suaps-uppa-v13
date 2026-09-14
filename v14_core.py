@@ -4,7 +4,6 @@ from pathlib import Path
 import streamlit as st
 import os
 from qr_registration import make_qr_png, new_registration_token, register_student_from_qr, registration_url, register_student_manually, search_students
-from bulk_enrollment import apply_bulk_enrollment_json
 
 # MANUAL_COURSE_REGISTRATION_V1
 
@@ -153,36 +152,6 @@ def ensure_qr_registration_schema():
         c.close()
 
 ensure_qr_registration_schema()
-
-# PRIVATE_BULK_ENROLLMENT_BRIDGE_V1
-@st.cache_resource(show_spinner=False)
-def _run_private_bulk_enrollment_once():
-    raw=os.getenv("SUAPS_BULK_ENROLL_JSON","").strip()
-    if not raw:
-        return None
-    try:
-        result=apply_bulk_enrollment_json(
-            db,raw,use_postgres=bool(globals().get("USE_POSTGRES",False))
-        )
-    except Exception as exc:
-        print(f"[SUAPS_BULK_ENROLL] status=error type={type(exc).__name__}")
-        return {"status":"error"}
-    status=str(result.get("status") or "unknown")
-    if status=="ok":
-        print(
-            f"[SUAPS_BULK_ENROLL] status=ok enrolled={int(result.get('enrolled') or 0)} "
-            f"created={int(result.get('created') or 0)} updated={int(result.get('updated') or 0)} "
-            f"offer_id={result.get('offer_id')}"
-        )
-    elif status=="missing_students":
-        print(f"[SUAPS_BULK_ENROLL] status=missing_students missing={result.get('missing') or []}")
-    elif status=="ambiguous_students":
-        print(f"[SUAPS_BULK_ENROLL] status=ambiguous_students ambiguous={result.get('ambiguous') or []}")
-    else:
-        print(f"[SUAPS_BULK_ENROLL] status={status} details={result}")
-    return result
-
-_run_private_bulk_enrollment_once()
 
 for k,v in {"page":"Accueil","profil":None,"user_id":None,"admin_section":"Tableau de bord","family":None}.items():
     st.session_state.setdefault(k,v)
