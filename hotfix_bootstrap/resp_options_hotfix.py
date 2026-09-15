@@ -15,15 +15,24 @@ def repair_source(source):
 
     # Newer UI patches alter the admin radio before the legacy CSV patch runs.
     # Restore the missing admin-only entry once the CSV/Excel block exists.
+    # Important: the CSV route itself may already contain the text "Semestres & CSV",
+    # so we must inspect the navigation line, not the whole source.
+    nav_match = re.search(
+        r'(?m)^\s*sec=st\.radio\("Rubrique",\[(.*?)\],horizontal=True,key="admin_section"\)\s*$',
+        source,
+    )
     if (
         "### 📥 Import CSV / Excel étudiants et inscriptions" in source
-        and '"Semestres & CSV"' not in source
+        and nav_match
+        and '"Semestres & CSV"' not in nav_match.group(0)
     ):
-        source = source.replace(
-            '"Actualités"],horizontal=True,key="admin_section")',
-            '"Actualités","Semestres & CSV"],horizontal=True,key="admin_section")',
+        nav_line = nav_match.group(0)
+        repaired_nav = nav_line.replace(
+            '"Actualités"',
+            '"Actualités","Semestres & CSV"',
             1,
         )
+        source = source[:nav_match.start()] + repaired_nav + source[nav_match.end():]
 
     # Keep the existing responsable/co-responsable repair independent from CSV.
     if "_resp_options" not in source:
