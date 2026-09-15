@@ -34,7 +34,7 @@ def test_combined_session_selector_shows_linked_offer_and_count():
     mod = importlib.import_module("presence_note_live_patch")
     patched = mod.patch_app_source(_sample_source())
     assert "_session['jour_horaire']" in patched
-    assert "_session['inscrit_count']" in patched
+    assert "r['inscrit_count']" in patched
     assert "combined_session" in patched
 
 
