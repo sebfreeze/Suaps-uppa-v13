@@ -6,15 +6,27 @@ NAV_OLD = '    sec=st.radio("Rubrique",["Tableau de bord","Créneaux","Présence
 NAV_NEW = '    sec=st.radio("Rubrique",["Tableau de bord","Créneaux","Présences","Présence / Note évaluation","Évaluations","Évaluation /20","Compétences","Barèmes","Actualités"],horizontal=True,key="admin_section")'
 EVAL_MARKER = '    elif sec=="Évaluations":\n'
 
+PRESENCE_SELECTOR_OLD = '''        offs=rows("SELECT * FROM offres ORDER BY activite,intitule")
+        if offs:
+            mp={f"{o['activite']} — {o['intitule']}":o["id"] for o in offs}; oid=mp[st.selectbox("Créneau",list(mp))]
+'''
+
+PRESENCE_SELECTOR_NEW = '''        offs=rows("SELECT o.*,(SELECT COUNT(*) FROM inscriptions i WHERE i.offre_id=o.id AND i.statut='Inscrit') AS inscrit_count FROM offres o ORDER BY o.activite,o.intitule,o.jour_horaire")
+        if offs:
+            mp={f"{o['activite']} — {o['intitule']} — {o['jour_horaire'] or 'horaire à définir'} ({int(o['inscrit_count'] or 0)} inscrit(s))":o["id"] for o in offs}
+            oid=mp[st.selectbox("Créneau",list(mp),key="presence_offer_selector")]
+            st.caption("Ce créneau détermine automatiquement la liste utilisée dans Présence / Note évaluation.")
+'''
+
 COMBINED_BLOCK = '''    # --- presence note evaluation integration ---
     elif sec=="Présence / Note évaluation":
         st.markdown("### ✅ Présence / Note évaluation")
         st.caption("Tableau du groupe : Nom / Prénom, Présence, Note et Observation. Les présences QR déjà validées sont pré-cochées automatiquement.")
-        _sessions=rows("SELECT s.id,s.offre_id,s.date_seance,s.theme,o.activite,o.intitule FROM seances s JOIN offres o ON o.id=s.offre_id ORDER BY s.date_seance DESC,s.id DESC")
+        _sessions=rows("SELECT s.id,s.offre_id,s.date_seance,s.theme,o.activite,o.intitule,o.jour_horaire,(SELECT COUNT(*) FROM inscriptions i WHERE i.offre_id=s.offre_id AND i.statut='Inscrit') AS inscrit_count FROM seances s JOIN offres o ON o.id=s.offre_id ORDER BY s.date_seance DESC,s.id DESC")
         if not _sessions:
             st.info("Crée d'abord une séance dans la rubrique Présences.")
         else:
-            _session=st.selectbox("Séance",_sessions,format_func=lambda r:f"{r['date_seance']} — {r['activite']} — {r['intitule']} — {r['theme'] or ''}",key="combined_session")
+            _session=st.selectbox("Séance",_sessions,format_func=lambda r:f"{r['date_seance']} — {r['activite']} — {r['intitule']} — {r['jour_horaire'] or 'horaire à définir'} — {int(r['inscrit_count'] or 0)} inscrit(s) — {r['theme'] or ''}",key="combined_session")
             _default_title=(_session["theme"] or "").strip() or f"Évaluation du {_session['date_seance']}"
             _c1,_c2,_c3=st.columns([2.4,1,1])
             _eval_title=_c1.text_input("Évaluation",value=_default_title,key=f"combined_title_{_session['id']}").strip() or _default_title
@@ -22,7 +34,21 @@ COMBINED_BLOCK = '''    # --- presence note evaluation integration ---
             _coef=_c3.number_input("Coefficient",min_value=0.1,value=1.0,step=0.1,key=f"combined_coef_{_session['id']}")
             _students=rows("SELECT u.id,u.nom,u.prenom,u.identifiant,i.modalite FROM inscriptions i JOIN utilisateurs u ON u.id=i.utilisateur_id WHERE i.offre_id=? AND i.statut='Inscrit' AND u.actif=1 ORDER BY u.nom,u.prenom",(_session["offre_id"],))
             if not _students:
-                st.info("Aucun étudiant inscrit sur ce créneau.")
+                _presence_count=one("SELECT COUNT(*) n FROM presences WHERE seance_id=?",(_session["id"],))
+                _relink_candidates=rows("SELECT o.id,o.activite,o.intitule,o.jour_horaire,(SELECT COUNT(*) FROM inscriptions i WHERE i.offre_id=o.id AND i.statut='Inscrit') AS inscrit_count FROM offres o WHERE o.activite=? ORDER BY inscrit_count DESC,o.intitule,o.jour_horaire",(_session["activite"],))
+                _relink_candidates=[r for r in _relink_candidates if int(r["id"])!=int(_session["offre_id"]) and int(r['inscrit_count'] or 0)>0]
+                if _relink_candidates:
+                    st.warning("Aucun étudiant inscrit sur ce créneau, mais des inscrits existent sur un autre créneau de la même activité.")
+                    if _presence_count and int(_presence_count["n"] or 0)>0:
+                        st.info("Des présences sont déjà enregistrées sur cette séance : le rattachement automatique est désactivé pour éviter de mélanger les groupes.")
+                    else:
+                        _relink_target=st.selectbox("Créneau contenant les inscrits",_relink_candidates,format_func=lambda r:f"{r['activite']} — {r['intitule']} — {r['jour_horaire'] or 'horaire à définir'} ({int(r['inscrit_count'] or 0)} inscrit(s))",key=f"combined_relink_{_session['id']}")
+                        if st.button("🔗 Rattacher la séance à ce créneau",key=f"combined_relink_btn_{_session['id']}",type="primary",use_container_width=True):
+                            exe("UPDATE seances SET offre_id=? WHERE id=?",(_relink_target["id"],_session["id"]))
+                            st.success("Séance rattachée au créneau contenant les inscrits.")
+                            st.rerun()
+                else:
+                    st.info("Aucun étudiant inscrit sur ce créneau.")
             else:
                 _presences=rows("SELECT * FROM presences WHERE seance_id=?",(_session["id"],))
                 _pmap={int(r["utilisateur_id"]):r for r in _presences}
@@ -31,7 +57,7 @@ COMBINED_BLOCK = '''    # --- presence note evaluation integration ---
                 for _ev in _evaluations:
                     _uid=int(_ev["utilisateur_id"])
                     if _uid not in _emap: _emap[_uid]=_ev
-                st.caption(f"{len(_students)} étudiant(s) • {_session['activite']} • note sur {_bareme:g}")
+                st.caption(f"{len(_students)} étudiant(s) • {_session['activite']} • {_session['jour_horaire'] or 'horaire à définir'} • note sur {_bareme:g}")
                 _table_rows=[]
                 for _student in _students:
                     _uid=int(_student["id"]); _old_p=_pmap.get(_uid); _old_e=_emap.get(_uid)
@@ -96,5 +122,7 @@ def patch_app_source(source: str) -> str:
     if EVAL_MARKER not in source:
         raise RuntimeError("Point d'insertion Évaluations live introuvable.")
     source = source.replace(NAV_OLD, NAV_NEW, 1)
+    if PRESENCE_SELECTOR_OLD in source:
+        source = source.replace(PRESENCE_SELECTOR_OLD, PRESENCE_SELECTOR_NEW, 1)
     source = source.replace(EVAL_MARKER, COMBINED_BLOCK + EVAL_MARKER, 1)
     return source
