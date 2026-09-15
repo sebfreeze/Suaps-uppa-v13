@@ -24,7 +24,6 @@ COMBINED_BLOCK = '''    # --- presence note evaluation integration ---
             if not _students:
                 st.info("Aucun étudiant inscrit sur ce créneau.")
             else:
-                import pandas as pd
                 _presences=rows("SELECT * FROM presences WHERE seance_id=?",(_session["id"],))
                 _pmap={int(r["utilisateur_id"]):r for r in _presences}
                 _evaluations=rows("SELECT * FROM evaluations WHERE activite=? AND intitule=? AND date_eval=? ORDER BY id DESC",(_session["activite"],_eval_title,_session["date_seance"]))
