@@ -22,7 +22,7 @@ def test_attendance_table_keeps_name_and_presence_compact_on_mobile():
     elif sec=="Évaluations":
         pass
 ''')
-    assert 'TextColumn("Nom / Prénom",width="medium")' in patched
-    assert 'CheckboxColumn("Présence",' in patched
-    assert 'width="small"' in patched
-    assert 'TextColumn("Nom / Prénom",width="large")' not in patched
+    assert 'TextColumn("Nom / Prénom",width=145,pinned=True)' in patched
+    assert 'CheckboxColumn("Présence",help="Coche si l\'étudiant est présent",width=75)' in patched
+    assert 'NumberColumn("Note",min_value=0.0,max_value=float(_bareme),step=0.25,required=False,width=70)' in patched
+    assert 'TextColumn("Observation",width=160)' in patched
