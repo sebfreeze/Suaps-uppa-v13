@@ -11,12 +11,12 @@ def _sample_source():
 '''
 
 
-def test_combined_attendance_uses_simple_present_checkbox():
+def test_combined_attendance_uses_table_checkbox():
     mod = importlib.import_module("presence_note_live_patch")
     patched = mod.patch_app_source(_sample_source())
-    assert '_present=_s.checkbox("Présent"' in patched
-    assert 'value=_old_status=="Présent"' in patched
-    assert '_status="Présent" if _present else "Absent"' in patched
+    assert 'st.column_config.CheckboxColumn("Présence"' in patched
+    assert '"Présence":_old_status=="Présent"' in patched
+    assert '"statut":"Présent" if bool(_row["Présence"]) else "Absent"' in patched
     assert '_s.selectbox("Présence"' not in patched
 
 
@@ -24,7 +24,7 @@ def test_qr_presence_is_prechecked_and_notes_observations_remain():
     mod = importlib.import_module("presence_note_live_patch")
     patched = mod.patch_app_source(_sample_source())
     assert 'Les présences QR déjà validées sont pré-cochées automatiquement.' in patched
-    assert '_note=_no.number_input("Note"' in patched
-    assert '_obs=_o.text_input("Observation"' in patched
+    assert 'st.column_config.NumberColumn("Note"' in patched
+    assert 'st.column_config.TextColumn("Observation"' in patched
     assert '💾 Enregistrer la séance' in patched
     compile(patched, "<patched>", "exec")
