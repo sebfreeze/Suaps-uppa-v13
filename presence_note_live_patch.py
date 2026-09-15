@@ -9,7 +9,7 @@ EVAL_MARKER = '    elif sec=="Évaluations":\n'
 COMBINED_BLOCK = '''    # --- presence note evaluation integration ---
     elif sec=="Présence / Note évaluation":
         st.markdown("### ✅ Présence / Note évaluation")
-        st.caption("Coche les présences, saisis la note et ajoute une observation sur la même feuille. Les présences QR déjà validées sont reprises automatiquement.")
+        st.caption("Listing complet du groupe : coche uniquement les présents. Les présences QR déjà validées sont pré-cochées automatiquement. Note et observation restent facultatives.")
         _sessions=rows("SELECT s.id,s.offre_id,s.date_seance,s.theme,o.activite,o.intitule FROM seances s JOIN offres o ON o.id=s.offre_id ORDER BY s.date_seance DESC,s.id DESC")
         if not _sessions:
             st.info("Crée d'abord une séance dans la rubrique Présences.")
@@ -32,15 +32,13 @@ COMBINED_BLOCK = '''    # --- presence note evaluation integration ---
                     _uid=int(_ev["utilisateur_id"])
                     if _uid not in _emap: _emap[_uid]=_ev
                 st.caption(f"{len(_students)} étudiant(s) • {_session['activite']} • note sur {_bareme:g}")
-                _statuses=["Présent","Absent","Justifié","Dispensé"]
                 with st.form(f"combined_presence_note_{_session['id']}"):
                     _h1,_h2,_h3,_h4=st.columns([2.2,1.3,1,2.8])
-                    _h1.markdown("**Étudiant**"); _h2.markdown("**Présence**"); _h3.markdown("**Note**"); _h4.markdown("**Observation**")
+                    _h1.markdown("**Étudiant**"); _h2.markdown("**Présent**"); _h3.markdown("**Note**"); _h4.markdown("**Observation**")
                     _combined_rows=[]; _combined_invalid=False
                     for _student in _students:
                         _uid=int(_student["id"]); _old_p=_pmap.get(_uid); _old_e=_emap.get(_uid)
-                        _old_status=_old_p["statut"] if _old_p else "Présent"
-                        if _old_status not in _statuses: _old_status="Présent"
+                        _old_status=_old_p["statut"] if _old_p else "Absent"
                         _old_note=float(_old_e["note"]) if _old_e and _old_e["note"] is not None else None
                         _old_obs=""
                         if _old_e and _old_e.get("commentaire"): _old_obs=str(_old_e["commentaire"])
@@ -48,7 +46,8 @@ COMBINED_BLOCK = '''    # --- presence note evaluation integration ---
                         _n,_s,_no,_o=st.columns([2.2,1.3,1,2.8])
                         _n.markdown(f"**{_student['nom']} {_student['prenom']}**")
                         if _student.get("identifiant"): _n.caption(f"N° {_student['identifiant']}")
-                        _status=_s.selectbox("Présence",_statuses,index=_statuses.index(_old_status),key=f"combined_status_{_session['id']}_{_uid}",label_visibility="collapsed")
+                        _present=_s.checkbox("Présent",value=_old_status=="Présent",key=f"combined_present_{_session['id']}_{_uid}",label_visibility="collapsed")
+                        _status="Présent" if _present else "Absent"
                         _note=_no.number_input("Note",min_value=0.0,value=_old_note,step=0.25,key=f"combined_note_{_session['id']}_{_uid}",label_visibility="collapsed",placeholder="—")
                         _obs=_o.text_input("Observation",value=_old_obs,key=f"combined_obs_{_session['id']}_{_uid}",label_visibility="collapsed",placeholder="Observation facultative")
                         if _note is not None and float(_note)>float(_bareme): _combined_invalid=True
