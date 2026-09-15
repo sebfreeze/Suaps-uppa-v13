@@ -52,10 +52,10 @@ COMBINED_BLOCK = '''    # --- presence note evaluation integration ---
                         disabled=["Nom / Prénom"],
                         height=min(720,44+36*len(_students)),
                         column_config={
-                            "Nom / Prénom":st.column_config.TextColumn("Nom / Prénom",width="large"),
-                            "Présence":st.column_config.CheckboxColumn("Présence",help="Coche si l'étudiant est présent"),
-                            "Note":st.column_config.NumberColumn("Note",min_value=0.0,max_value=float(_bareme),step=0.25,required=False),
-                            "Observation":st.column_config.TextColumn("Observation",width="large"),
+                            "Nom / Prénom":st.column_config.TextColumn("Nom / Prénom",width=145,pinned=True),
+                            "Présence":st.column_config.CheckboxColumn("Présence",help="Coche si l'étudiant est présent",width=75),
+                            "Note":st.column_config.NumberColumn("Note",min_value=0.0,max_value=float(_bareme),step=0.25,required=False,width=70),
+                            "Observation":st.column_config.TextColumn("Observation",width=160),
                         },
                         key=f"combined_table_{_session['id']}",
                     )
