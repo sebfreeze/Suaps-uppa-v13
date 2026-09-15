@@ -18,5 +18,9 @@ jobs:
           python-version: '3.12'
       - name: Install test dependencies
         run: python -m pip install -r requirements-dev.txt
+      - name: Compile changed patch
+        run: python -m py_compile presence_note_live_patch.py
       - name: Run attendance flow tests
         run: python -m pytest -q tests/test_attendance_flow_links.py
+      - name: Run full regression suite
+        run: python -m pytest -q
