@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from threading import RLock
 
 import pedagogie_resources as resources
 from pedagogie_seed import seed_official_resources
 
 _FORCE_SQLITE = False
 _STORAGE_WARNING = ""
+_INIT_CACHE = {}
+_INIT_LOCK = RLock()
 
 
 class QmarkConnection:
@@ -44,20 +47,39 @@ def _postgres_factory(database_url: str):
     return factory
 
 
+def _main_app_uses_postgres(factory) -> bool:
+    """Détecte le backend déjà configuré par la couche sécurité du live."""
+    try:
+        return bool(getattr(factory, "__globals__", {}).get("USE_POSTGRES"))
+    except Exception:
+        return False
+
+
 def resource_connection_factory(sqlite_factory):
-    """Retourne ``(factory, use_postgres)`` pour les seules ressources pédagogiques."""
+    """Retourne ``(factory, use_postgres)`` pour les ressources pédagogiques.
+
+    En production, ``sqlite_factory`` est en réalité la fonction ``db`` du live,
+    déjà transformée par la couche sécurité pour utiliser le pool PostgreSQL.
+    La réutiliser évite une nouvelle connexion réseau de test à chaque rerun.
+    """
     global _FORCE_SQLITE, _STORAGE_WARNING
+
+    if _main_app_uses_postgres(sqlite_factory):
+        _STORAGE_WARNING = ""
+        return sqlite_factory, True
+
     database_url = os.getenv("DATABASE_URL", "").strip()
     if _FORCE_SQLITE or not database_url:
         return sqlite_factory, False
 
+    # Repli de compatibilité si le module est utilisé hors du live principal.
     pg_factory = _postgres_factory(database_url)
     try:
         probe = pg_factory()
         probe.close()
         _STORAGE_WARNING = ""
         return pg_factory, True
-    except Exception as exc:  # disponibilité externe : le live doit rester accessible
+    except Exception:  # disponibilité externe : le live doit rester accessible
         _FORCE_SQLITE = True
         _STORAGE_WARNING = (
             "Le stockage PostgreSQL des ressources est momentanément indisponible ; "
@@ -71,13 +93,27 @@ def storage_warning() -> str:
 
 
 def init_v14_pedagogy(sqlite_factory) -> tuple[object, bool]:
-    """Initialise ressources + seed officiel et la liaison ``ressource_id`` des séances V14."""
+    """Initialise ressources + seed officiel une seule fois par processus/backend."""
     factory, use_postgres = resource_connection_factory(sqlite_factory)
-    resources.init_pedagogy_schema(factory, use_postgres)
-    seed_official_resources(factory, use_postgres)
-    # La migration de seances doit utiliser le backend réellement détecté.
-    resources.ensure_seance_resource_column(factory, use_postgres)
-    return factory, use_postgres
+    app_globals = getattr(sqlite_factory, "__globals__", {})
+    backend_key = (
+        "postgres" if use_postgres else "sqlite",
+        str(os.getenv("DATABASE_URL", "") if use_postgres else ""),
+        id(app_globals),
+    )
+
+    with _INIT_LOCK:
+        cached = _INIT_CACHE.get(backend_key)
+        if cached is not None:
+            return cached
+
+        resources.init_pedagogy_schema(factory, use_postgres)
+        seed_official_resources(factory, use_postgres)
+        # La migration de seances doit utiliser le backend réellement détecté.
+        resources.ensure_seance_resource_column(factory, use_postgres)
+        result = (factory, use_postgres)
+        _INIT_CACHE[backend_key] = result
+        return result
 
 
 def create_v14_session(exe, one, resource: dict, date_seance: str, group_label: str) -> int:
