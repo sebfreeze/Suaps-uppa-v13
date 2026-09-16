@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pedagogie_integration
 from competition_live_patch import patch_app_source as _patch_competition_source
+from performance_live_patch import patch_app_source as _patch_performance_source
 from presence_note_live_patch import patch_app_source as _patch_presence_note_source
 from roster_admin_live_patch import patch_app_source as _patch_roster_admin_source
 
@@ -13,7 +14,8 @@ def _combined_live_patch(source: str) -> str:
     source = _patch_presence_note_source(source)
     source = _patch_competition_source(source)
     source = _patch_roster_admin_source(source)
-    return _original_pedagogy_patch(source)
+    source = _original_pedagogy_patch(source)
+    return _patch_performance_source(source)
 
 
 pedagogie_integration.patch_app_source = _combined_live_patch
