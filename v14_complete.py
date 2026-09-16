@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pedagogie_integration
+from competition_live_patch import patch_app_source as _patch_competition_source
 from presence_note_live_patch import patch_app_source as _patch_presence_note_source
 
 
@@ -9,6 +10,7 @@ _original_pedagogy_patch = pedagogie_integration.patch_app_source
 
 def _combined_live_patch(source: str) -> str:
     source = _patch_presence_note_source(source)
+    source = _patch_competition_source(source)
     return _original_pedagogy_patch(source)
 
 
