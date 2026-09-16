@@ -1,5 +1,13 @@
 from pathlib import Path
 
+# Active explicitement la couche d'indexation/montée en charge. Le chargement
+# automatique du bootstrap peut échouer sur Render car ce module vit dans le
+# sous-dossier security_bootstrap.
+try:
+    from security_bootstrap import scaling as _suaps_scaling
+except Exception as _scaling_exc:
+    print(f"[SUAPS_PERF] scaling_load_error={type(_scaling_exc).__name__}:{_scaling_exc}")
+
 import pedagogie_integration
 from competition_live_patch import patch_app_source as _patch_competition_source
 from performance_live_patch import patch_app_source as _patch_performance_source
