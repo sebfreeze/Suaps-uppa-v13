@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import streamlit as st
@@ -10,24 +11,97 @@ from presence_note_service import (
 )
 
 
-# Conserve l'application V13 intacte et ajoute seulement l'entrée combinée
+COMPETITION_MENU_LABEL = "Compétition"
+
+
+# Conserve l'application V13 intacte et ajoute seulement les entrées complémentaires
 # dans la navigation enseignant.
 _original_sidebar_radio = st.sidebar.radio
 
 
-def _sidebar_radio_with_combined(label, options, *args, **kwargs):
+def _inject_competition_navigation(options):
+    original_is_tuple = isinstance(options, tuple)
+    items = list(options)
+
+    # La navigation étudiant ne contient que Accueil / Portail étudiant :
+    # on ne lui ajoute pas la rubrique de gestion des compétitions.
+    teacher_navigation = any(
+        marker in items
+        for marker in ("Tableau de bord", "Étudiants", "Présences", "Cahier de notes")
+    )
+    if not teacher_navigation or COMPETITION_MENU_LABEL in items:
+        return options
+
+    if "Compétences" in items:
+        items.insert(items.index("Compétences"), COMPETITION_MENU_LABEL)
+    elif "Exports" in items:
+        items.insert(items.index("Exports"), COMPETITION_MENU_LABEL)
+    else:
+        items.append(COMPETITION_MENU_LABEL)
+
+    return tuple(items) if original_is_tuple else items
+
+
+def _sidebar_radio_with_additions(label, options, *args, **kwargs):
     if label == "Navigation":
         options = inject_combined_navigation(options)
+        options = _inject_competition_navigation(options)
     return _original_sidebar_radio(label, options, *args, **kwargs)
 
 
-st.sidebar.radio = _sidebar_radio_with_combined
+st.sidebar.radio = _sidebar_radio_with_additions
 try:
     legacy_path = Path(__file__).with_name("app_legacy.py")
     legacy_code = legacy_path.read_text(encoding="utf-8")
     exec(compile(legacy_code, str(legacy_path), "exec"), globals(), globals())
 finally:
     st.sidebar.radio = _original_sidebar_radio
+
+
+def _competition_sql(sql):
+    """Adapte le module Compétition historique au schéma V13 actuel."""
+    adapted = sql.replace("utilisateurs", "etudiants")
+    adapted = adapted.replace("profil='Étudiant' AND ", "")
+    if globals().get("USE_POSTGRES"):
+        adapted = adapted.replace(" BLOB", " BYTEA")
+    return adapted
+
+
+def _competition_rows(sql, params=()):
+    frame = qdf(_competition_sql(sql), params)
+    return frame.to_dict(orient="records")
+
+
+def _competition_one(sql, params=()):
+    data = _competition_rows(sql, params)
+    return data[0] if data else None
+
+
+def _competition_exec(sql, params=()):
+    return exec_sql(_competition_sql(sql), params)
+
+
+def _render_competition():
+    from sports_co_module import init_sports_co_db, render_sports_co
+
+    st.markdown("## 🏆 Compétition")
+    st.caption(
+        "Sports collectifs • Badminton • Pelote Basque • équipes • matchs • tournois"
+    )
+    st.link_button(
+        "🔗 My Sport U — compte, licence et compétitions",
+        "https://sport-u.com/mysportu/",
+        use_container_width=True,
+    )
+
+    init_sports_co_db(_competition_exec)
+    render_sports_co(
+        st,
+        _competition_rows,
+        _competition_one,
+        _competition_exec,
+        date,
+    )
 
 
 def _teacher_observation(presence_row, evaluation_row):
@@ -236,7 +310,12 @@ def _render_presence_note_evaluation():
         st.rerun()
 
 
-if globals().get("menu") == COMBINED_MENU_LABEL:
+if globals().get("menu") == COMPETITION_MENU_LABEL:
+    if st.session_state.get("role") == "Enseignant":
+        _render_competition()
+    else:
+        st.error("Cette page est réservée aux enseignants.")
+elif globals().get("menu") == COMBINED_MENU_LABEL:
     if st.session_state.get("role") == "Enseignant":
         _render_presence_note_evaluation()
     else:
