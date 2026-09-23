@@ -104,6 +104,177 @@ MANAGEMENT_BLOCK = '''    # --- roster admin integration ---
             def _offer_label(o):
                 return f"ID {o['id']} — {o['activite']} — {o['intitule']} — {o['jour_horaire'] or 'horaire à définir'} — {int(o['inscrit_count'] or 0)} inscrit(s) — {int(o['session_count'] or 0)} séance(s)"
 
+            st.markdown("#### ➕ Ajouter un étudiant manuellement")
+            if st.button("➕ Ajouter un étudiant",key="roster_manual_toggle",type="primary",width="stretch"):
+                st.session_state["roster_manual_open"]=not st.session_state.get("roster_manual_open",False)
+
+            if st.session_state.get("roster_manual_open",False):
+                _manual_target=st.selectbox("Créneau cible",_offers,format_func=_offer_label,key="roster_manual_target")
+                if str(_manual_target.get("public") or "")=="Personnel":
+                    st.info("Ce créneau est réservé au personnel : l'ajout d'un étudiant n'est pas proposé.")
+                else:
+                    _manual_existing_tab,_manual_new_tab=st.tabs(["Rechercher un étudiant","Nouvel étudiant"])
+
+                    with _manual_existing_tab:
+                        _manual_query=st.text_input(
+                            "Nom, prénom, e-mail ou n° étudiant",
+                            key="roster_manual_search",
+                            placeholder="Ex. Dupont, Paul, 12345678…",
+                        )
+                        if _manual_query.strip():
+                            _manual_matches=search_students(db,_manual_query,limit=30)
+                            if not _manual_matches:
+                                st.info("Aucun étudiant actif trouvé. Utilise l'onglet « Nouvel étudiant » pour le créer.")
+                            else:
+                                _manual_options={
+                                    f"{s['nom']} {s['prenom']} — {s['identifiant'] or 'sans numéro'} — {s['email']}":s
+                                    for s in _manual_matches
+                                }
+                                _manual_label=st.selectbox("Étudiant",list(_manual_options),key="roster_manual_existing_choice")
+                                _manual_modalite=st.selectbox("Modalité",["UET","UECF","Non noté"],key="roster_manual_existing_modality")
+                                if st.button("Ajouter au créneau",key="roster_manual_existing_add",type="primary",width="stretch"):
+                                    _selected=_manual_options[_manual_label]
+                                    try:
+                                        _result=register_student_manually(
+                                            db,_manual_target["id"],_selected["id"],_manual_modalite,
+                                            use_postgres=bool(globals().get("USE_POSTGRES",False)),
+                                        )
+                                    except Exception as _exc:
+                                        st.error(f"Ajout impossible : {_exc}")
+                                    else:
+                                        if _result=="ok":
+                                            st.success(f"{_selected['prenom']} {_selected['nom']} a été ajouté(e) au créneau.")
+                                        elif _result=="duplicate":
+                                            st.info("Cet étudiant est déjà inscrit à ce créneau.")
+                                        elif _result=="full":
+                                            st.error("Créneau complet : aucune place disponible.")
+                                        elif _result=="unknown_student":
+                                            st.error("Le compte étudiant n'est plus actif ou n'existe plus.")
+                                        else:
+                                            st.error("L'inscription manuelle n'a pas pu être enregistrée.")
+
+                    with _manual_new_tab:
+                        st.caption("Nom et prénom sont obligatoires. Le n° étudiant et l'e-mail peuvent être renseignés si disponibles.")
+                        with st.form("roster_manual_new_student_form",clear_on_submit=True):
+                            _mn1,_mn2=st.columns(2)
+                            _new_nom=_mn1.text_input("Nom *")
+                            _new_prenom=_mn2.text_input("Prénom *")
+                            _mn3,_mn4=st.columns(2)
+                            _new_ident=_mn3.text_input("N° étudiant")
+                            _new_email=_mn4.text_input("E-mail")
+                            _mn5,_mn6=st.columns(2)
+                            _new_compo=_mn5.text_input("Formation / service")
+                            _new_modalite=_mn6.selectbox("Modalité",["UET","UECF","Non noté"])
+                            _new_submit=st.form_submit_button("Créer et ajouter au créneau",type="primary",width="stretch")
+
+                        def _create_and_enroll_manual_student(_offer_id,_nom,_prenom,_ident,_email,_compo,_modalite):
+                            _nom=str(_nom or "").strip()
+                            _prenom=str(_prenom or "").strip()
+                            _ident=str(_ident or "").strip()
+                            _email=str(_email or "").strip().lower()
+                            _compo=str(_compo or "").strip()
+                            if not _nom or not _prenom:
+                                return "missing_name",None
+                            _c=db()
+                            try:
+                                _q=_c.cursor()
+                                _q.execute("SELECT id,capacite,public FROM offres WHERE id=?",(_offer_id,))
+                                _offer=_q.fetchone()
+                                if not _offer:
+                                    _c.rollback(); return "invalid_offer",None
+                                if str(_offer["public"] or "")=="Personnel":
+                                    _c.rollback(); return "staff_only",None
+
+                                _u=None
+                                if _ident:
+                                    _q.execute("SELECT id,profil,nom,prenom,email,identifiant FROM utilisateurs WHERE identifiant=? ORDER BY id LIMIT 1",(_ident,))
+                                    _u=_q.fetchone()
+                                if _u is None and _email:
+                                    _q.execute("SELECT id,profil,nom,prenom,email,identifiant FROM utilisateurs WHERE lower(email)=lower(?) ORDER BY id LIMIT 1",(_email,))
+                                    _u=_q.fetchone()
+
+                                if _u is not None:
+                                    if str(_u["profil"])!="Étudiant":
+                                        _c.rollback(); return "not_student",None
+                                    _uid=_u["id"]
+                                    _q.execute("SELECT id,statut FROM inscriptions WHERE utilisateur_id=? AND offre_id=?",(_uid,_offer_id))
+                                    _existing=_q.fetchone()
+                                    if _existing and str(_existing["statut"])=="Inscrit":
+                                        _c.rollback(); return "duplicate",(_uid,_u["prenom"],_u["nom"])
+                                else:
+                                    _existing=None
+
+                                _q.execute("SELECT COUNT(*) AS n FROM inscriptions WHERE offre_id=? AND statut='Inscrit'",(_offer_id,))
+                                _registered=int(_q.fetchone()["n"] or 0)
+                                _capacity=max(0,int(_offer["capacite"] or 0))
+                                if _capacity and _registered>=_capacity:
+                                    _c.rollback(); return "full",None
+
+                                if _u is None:
+                                    _stored_email=_email or f"manuel.{datetime.now().strftime('%Y%m%d%H%M%S%f')}@suaps.local"
+                                    _q.execute(
+                                        "INSERT INTO utilisateurs(profil,nom,prenom,email,identifiant,composante,actif) VALUES('Étudiant',?,?,?,?,?,1)",
+                                        (_nom,_prenom,_stored_email,_ident,_compo),
+                                    )
+                                    try:
+                                        _uid=_q.lastrowid
+                                    except Exception:
+                                        _uid=None
+                                    if not _uid:
+                                        if _ident:
+                                            _q.execute("SELECT id FROM utilisateurs WHERE identifiant=? ORDER BY id DESC LIMIT 1",(_ident,))
+                                        else:
+                                            _q.execute("SELECT id FROM utilisateurs WHERE lower(email)=lower(?) ORDER BY id DESC LIMIT 1",(_stored_email,))
+                                        _uid=_q.fetchone()["id"]
+                                else:
+                                    _uid=_u["id"]
+                                    _q.execute(
+                                        "UPDATE utilisateurs SET nom=?,prenom=?,composante=?,actif=1 WHERE id=?",
+                                        (_nom,_prenom,_compo,_uid),
+                                    )
+
+                                if _existing:
+                                    _q.execute(
+                                        "UPDATE inscriptions SET modalite=?,statut='Inscrit',date_inscription=? WHERE id=?",
+                                        (_modalite,datetime.now().isoformat(timespec="seconds"),_existing["id"]),
+                                    )
+                                else:
+                                    _q.execute(
+                                        "INSERT INTO inscriptions(utilisateur_id,offre_id,modalite,statut,date_inscription) VALUES(?,?,?,'Inscrit',?)",
+                                        (_uid,_offer_id,_modalite,datetime.now().isoformat(timespec="seconds")),
+                                    )
+                                _c.commit()
+                                return "ok",(_uid,_prenom,_nom)
+                            except Exception:
+                                try: _c.rollback()
+                                except Exception: pass
+                                raise
+                            finally:
+                                _c.close()
+
+                        if _new_submit:
+                            try:
+                                _new_result,_new_student=_create_and_enroll_manual_student(
+                                    _manual_target["id"],_new_nom,_new_prenom,_new_ident,_new_email,_new_compo,_new_modalite
+                                )
+                            except Exception as _exc:
+                                st.error(f"Création impossible : {_exc}")
+                            else:
+                                if _new_result=="ok":
+                                    st.success(f"{_new_student[1]} {_new_student[2]} a été créé(e) et ajouté(e) au créneau.")
+                                elif _new_result=="missing_name":
+                                    st.error("Le nom et le prénom sont obligatoires.")
+                                elif _new_result=="duplicate":
+                                    st.info("Cet étudiant existe déjà et est déjà inscrit à ce créneau.")
+                                elif _new_result=="full":
+                                    st.error("Créneau complet : aucune place disponible.")
+                                elif _new_result=="not_student":
+                                    st.error("Un compte non étudiant utilise déjà ce n° étudiant ou cet e-mail.")
+                                elif _new_result=="staff_only":
+                                    st.error("Ce créneau est réservé au personnel.")
+                                else:
+                                    st.error("Création ou inscription impossible.")
+
             st.markdown("#### 🔁 Rattacher une séance au bon créneau")
             _sessions_all=rows("SELECT s.id,s.offre_id,s.date_seance,s.theme,o.activite,o.intitule,o.jour_horaire FROM seances s JOIN offres o ON o.id=s.offre_id ORDER BY s.date_seance DESC,s.id DESC")
             if _sessions_all:
