@@ -13,7 +13,7 @@ COPY . .
 
 EXPOSE 8501
 
-CMD streamlit run app_design_pedagogie.py \
+CMD streamlit run v14_complete.py \
     --server.address=0.0.0.0 \
     --server.port=${PORT:-8501} \
     --server.headless=true \
