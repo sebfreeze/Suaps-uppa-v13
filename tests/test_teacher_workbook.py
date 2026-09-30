@@ -13,6 +13,7 @@ from teacher_workbook import (
     _rubric_total_20,
     _normalize_student_import_frame,
     _student_import_template,
+    _students_for_session,
     _import_modality,
     _offer_import_values,
     _score_from_20,
@@ -269,3 +270,82 @@ def test_offer_import_values_skips_plain_student_file():
     import pandas as pd
 
     assert _offer_import_values(pd.Series({"nom": "DUPONT"})) is None
+
+
+
+def test_students_for_session_uses_activity_registrations_before_all_students():
+    import pandas as pd
+
+    calls = []
+
+    def qdf(sql, params=()):
+        calls.append((sql, params))
+        if "JOIN inscriptions" in sql and "lower(o.activite)=lower(?)" in sql:
+            return pd.DataFrame(
+                [
+                    {
+                        "id": 41,
+                        "nom": "NAGEUR",
+                        "prenom": "Nina",
+                        "numero_etudiant": "700001",
+                        "groupe": "",
+                    }
+                ]
+            )
+        raise AssertionError("La fonction ne doit pas basculer sur tous les étudiants.")
+
+    result = _students_for_session(
+        qdf,
+        {"activite": "Natation", "groupe": ""},
+    )
+    assert result["nom"].tolist() == ["NAGEUR"]
+    assert calls[0][1] == ("Natation",)
+
+
+def test_students_for_session_matches_offer_title_as_group():
+    import pandas as pd
+
+    def qdf(sql, params=()):
+        if "JOIN inscriptions" in sql:
+            assert params == (
+                "Natation",
+                "Natation sportive",
+                "Natation sportive",
+            )
+            return pd.DataFrame(
+                [
+                    {
+                        "id": 42,
+                        "nom": "CRAWL",
+                        "prenom": "Camille",
+                        "numero_etudiant": "700002",
+                        "groupe": "",
+                    }
+                ]
+            )
+        raise AssertionError("Le roster d'inscription doit être prioritaire.")
+
+    result = _students_for_session(
+        qdf,
+        {"activite": "Natation", "groupe": "Natation sportive"},
+    )
+    assert result["id"].tolist() == [42]
+
+
+def test_students_for_session_does_not_mix_when_other_registrations_exist():
+    import pandas as pd
+
+    def qdf(sql, params=()):
+        if "JOIN inscriptions" in sql:
+            return pd.DataFrame(
+                columns=["id", "nom", "prenom", "numero_etudiant", "groupe"]
+            )
+        if "COUNT(*) AS n FROM inscriptions" in sql:
+            return pd.DataFrame([{"n": 72}])
+        raise AssertionError("Ne doit pas charger tous les étudiants d'une autre activité.")
+
+    result = _students_for_session(
+        qdf,
+        {"activite": "Surf", "groupe": ""},
+    )
+    assert result.empty
