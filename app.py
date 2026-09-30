@@ -16,13 +16,50 @@ from teacher_workbook import (
     render_teacher_workbook,
 )
 
+from pedagogie_resources import (
+    init_pedagogy_schema,
+    ensure_seance_resource_column,
+    render_teacher_resources,
+    render_student_resources,
+)
+from pedagogie_seed import seed_official_resources
 
+
+PEDAGOGY_MENU_LABEL = "Ressources pédagogiques"
 COMPETITION_MENU_LABEL = "Compétition"
 
 
 # Conserve l'application V13 intacte et ajoute seulement les entrées complémentaires
 # dans la navigation enseignant.
 _original_sidebar_radio = st.sidebar.radio
+
+
+def _inject_pedagogy_navigation(options):
+    original_is_tuple = isinstance(options, tuple)
+    items = list(options)
+
+    if PEDAGOGY_MENU_LABEL in items:
+        return options
+
+    # Vue étudiant historique : Accueil / Portail étudiant.
+    if "Portail étudiant" in items and "Tableau de bord" not in items:
+        items.append(PEDAGOGY_MENU_LABEL)
+        return tuple(items) if original_is_tuple else items
+
+    # Vue enseignant : placer les ressources près du tableau de bord.
+    teacher_navigation = any(
+        marker in items
+        for marker in ("Tableau de bord", "Étudiants", "Présences", "Cahier de notes")
+    )
+    if not teacher_navigation:
+        return options
+
+    if "Tableau de bord" in items:
+        items.insert(items.index("Tableau de bord") + 1, PEDAGOGY_MENU_LABEL)
+    else:
+        items.insert(1 if items else 0, PEDAGOGY_MENU_LABEL)
+
+    return tuple(items) if original_is_tuple else items
 
 
 def _inject_competition_navigation(options):
@@ -50,6 +87,7 @@ def _inject_competition_navigation(options):
 
 def _sidebar_radio_with_additions(label, options, *args, **kwargs):
     if label == "Navigation":
+        options = _inject_pedagogy_navigation(options)
         options = inject_combined_navigation(options)
         options = inject_workbook_navigation(options)
         options = _inject_competition_navigation(options)
@@ -63,6 +101,38 @@ try:
     exec(compile(legacy_code, str(legacy_path), "exec"), globals(), globals())
 finally:
     st.sidebar.radio = _original_sidebar_radio
+
+
+def _ensure_pedagogy_ready():
+    if st.session_state.get("_pedagogy_ready"):
+        return
+
+    use_postgres = bool(globals().get("USE_POSTGRES"))
+    init_pedagogy_schema(get_conn, use_postgres)
+    ensure_seance_resource_column(get_conn, use_postgres)
+    seed_official_resources(get_conn, use_postgres)
+    st.session_state["_pedagogy_ready"] = True
+
+
+def _render_pedagogy():
+    _ensure_pedagogy_ready()
+    if st.session_state.get("role") == "Enseignant":
+        secret_reader = globals().get("secret_value")
+        admin_code = (
+            secret_reader("PEDAGOGY_ADMIN_CODE", "").strip()
+            if callable(secret_reader)
+            else ""
+        )
+        render_teacher_resources(
+            st,
+            get_conn=get_conn,
+            use_postgres=bool(globals().get("USE_POSTGRES")),
+            exec_sql=exec_sql,
+            activities=globals().get("ACTIVITES", []),
+            admin_code_value=admin_code,
+        )
+    else:
+        render_student_resources(st, get_conn=get_conn)
 
 
 def _competition_sql(sql):
@@ -317,7 +387,9 @@ def _render_presence_note_evaluation():
         st.rerun()
 
 
-if globals().get("menu") == WORKBOOK_MENU_LABEL:
+if globals().get("menu") == PEDAGOGY_MENU_LABEL:
+    _render_pedagogy()
+elif globals().get("menu") == WORKBOOK_MENU_LABEL:
     if st.session_state.get("role") == "Enseignant":
         render_teacher_workbook(
             st,
