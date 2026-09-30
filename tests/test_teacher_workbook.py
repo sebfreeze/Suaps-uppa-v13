@@ -11,6 +11,8 @@ from teacher_workbook import (
     _normalized_note_20,
     _presence_comment_for_save,
     _rubric_total_20,
+    _normalize_student_import_frame,
+    _student_import_template,
     _score_from_20,
     _weighted_average_20,
     inject_workbook_navigation,
@@ -181,3 +183,25 @@ def test_attendance_score_6_ignores_justified_and_exempt():
     )
     assert value == 4.0
     assert _attendance_score_6(["Justifié", "Dispensé"]) is None
+
+
+def test_student_import_template_keeps_email_optional():
+    template = _student_import_template()
+    assert list(template.columns) == [
+        "nom", "prenom", "email", "numero_etudiant", "groupe"
+    ]
+    assert template.loc[0, "email"] == ""
+    assert template.loc[0, "nom"]
+    assert template.loc[0, "prenom"]
+
+
+def test_student_import_normalizes_common_column_names():
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        columns=["Nom", "Prénom", "Mail", "N° étudiant", "Groupe"]
+    )
+    result = _normalize_student_import_frame(frame)
+    assert list(result.columns) == [
+        "nom", "prenom", "email", "numero_etudiant", "groupe"
+    ]
