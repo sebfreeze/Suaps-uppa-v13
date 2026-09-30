@@ -229,18 +229,6 @@ def _render_attendance(st, qdf, upsert_presence, session, students):
         cursor = _advance_index(cursor, len(ids), 0)
         st.session_state[cursor_key] = cursor
 
-        jump_eid = st.selectbox(
-            "Aller à un étudiant",
-            ids,
-            index=cursor,
-            format_func=lambda value: labels[value],
-            key=f"workbook_attendance_jump_{sid}",
-        )
-        jump_index = ids.index(int(jump_eid))
-        if jump_index != cursor:
-            cursor = jump_index
-            st.session_state[cursor_key] = cursor
-
         eid = ids[cursor]
         student = students[students["id"] == eid].iloc[0]
         old = pmap.get(eid)
