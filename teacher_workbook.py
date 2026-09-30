@@ -293,6 +293,107 @@ def _render_workbook_quick_actions(st, qdf, exec_sql):
                 use_container_width=True,
             )
 
+    with st.expander("🗑️ Supprimer un créneau / une séance", expanded=False):
+        st.warning(
+            "Suppression définitive. Un créneau supprimé retire ses inscriptions "
+            "mais ne supprime pas les étudiants. Une séance supprimée retire ses présences."
+        )
+        delete_offer_tab, delete_session_tab = st.tabs(
+            ["Créneaux", "Séances"]
+        )
+
+        with delete_offer_tab:
+            offers_to_delete = qdf(
+                """
+                SELECT o.id, o.activite, o.intitule, o.jour_horaire,
+                       COUNT(i.id) AS nb_inscrits
+                FROM offres_inscription o
+                LEFT JOIN inscriptions i ON i.offre_id=o.id
+                GROUP BY o.id, o.activite, o.intitule, o.jour_horaire
+                ORDER BY o.activite, o.intitule, o.id
+                """
+            )
+            if offers_to_delete.empty:
+                st.info("Aucun créneau à supprimer.")
+            else:
+                offer_labels = {}
+                for _, offer in offers_to_delete.iterrows():
+                    label = (
+                        f"#{int(offer['id'])} • {offer['activite']} — "
+                        f"{offer['intitule']} • {offer['jour_horaire'] or 'horaire non renseigné'} "
+                        f"• {int(offer['nb_inscrits'] or 0)} inscrit(s)"
+                    )
+                    offer_labels[label] = int(offer["id"])
+
+                selected_offer_label = st.selectbox(
+                    "Créneau à supprimer",
+                    list(offer_labels.keys()),
+                    key="workbook_delete_offer_select",
+                )
+                confirm_offer = st.checkbox(
+                    "Je confirme la suppression de ce créneau et de ses inscriptions.",
+                    key="workbook_delete_offer_confirm",
+                )
+                if st.button(
+                    "🗑️ Supprimer ce créneau",
+                    disabled=not confirm_offer,
+                    use_container_width=True,
+                    key="workbook_delete_offer_button",
+                ):
+                    exec_sql(
+                        "DELETE FROM offres_inscription WHERE id=?",
+                        (offer_labels[selected_offer_label],),
+                    )
+                    st.success("Créneau supprimé. Les étudiants sont conservés.")
+                    st.rerun()
+
+        with delete_session_tab:
+            sessions_to_delete = qdf(
+                """
+                SELECT s.id, s.activite, s.groupe, s.date_seance, s.theme,
+                       COUNT(p.id) AS nb_presences
+                FROM seances s
+                LEFT JOIN presences p ON p.seance_id=s.id
+                GROUP BY s.id, s.activite, s.groupe, s.date_seance, s.theme
+                ORDER BY s.date_seance DESC, s.id DESC
+                """
+            )
+            if sessions_to_delete.empty:
+                st.info("Aucune séance à supprimer.")
+            else:
+                session_labels = {}
+                for _, session_row in sessions_to_delete.iterrows():
+                    label = (
+                        f"#{int(session_row['id'])} • {session_row['date_seance']} • "
+                        f"{session_row['activite']} • "
+                        f"{session_row['groupe'] or 'sans groupe'} • "
+                        f"{session_row['theme'] or 'sans thème'} "
+                        f"• {int(session_row['nb_presences'] or 0)} présence(s)"
+                    )
+                    session_labels[label] = int(session_row["id"])
+
+                selected_session_label = st.selectbox(
+                    "Séance à supprimer",
+                    list(session_labels.keys()),
+                    key="workbook_delete_session_select",
+                )
+                confirm_session = st.checkbox(
+                    "Je confirme la suppression de cette séance et de ses présences.",
+                    key="workbook_delete_session_confirm",
+                )
+                if st.button(
+                    "🗑️ Supprimer cette séance",
+                    disabled=not confirm_session,
+                    use_container_width=True,
+                    key="workbook_delete_session_button",
+                ):
+                    exec_sql(
+                        "DELETE FROM seances WHERE id=?",
+                        (session_labels[selected_session_label],),
+                    )
+                    st.success("Séance supprimée avec ses présences.")
+                    st.rerun()
+
     with st.expander("📥 Importer CSV / Excel", expanded=False):
         st.caption(
             "Nom et Prénom sont obligatoires. Si activite + creneau sont présents, "
@@ -786,16 +887,79 @@ def _clean(value):
 
 
 def _students_for_session(qdf, session):
+    """Retourne le roster de la séance sans mélanger les activités.
+
+    Priorité aux inscriptions en ligne liées à l'activité et, si renseigné,
+    au groupe/intitulé du créneau. Le comportement historique n'est utilisé
+    qu'en absence totale d'inscriptions dans l'application.
+    """
+    activity = _clean(session.get("activite"))
     group = _clean(session.get("groupe"))
+
+    if activity:
+        if group:
+            registered = qdf(
+                """
+                SELECT DISTINCT e.id, e.nom, e.prenom, e.numero_etudiant, e.groupe
+                FROM etudiants e
+                JOIN inscriptions i ON i.etudiant_id=e.id
+                JOIN offres_inscription o ON o.id=i.offre_id
+                WHERE e.actif=1
+                  AND i.statut='Inscrit'
+                  AND lower(o.activite)=lower(?)
+                  AND (
+                      lower(coalesce(o.groupe,''))=lower(?)
+                      OR lower(o.intitule)=lower(?)
+                  )
+                ORDER BY e.nom, e.prenom
+                """,
+                (activity, group, group),
+            )
+        else:
+            registered = qdf(
+                """
+                SELECT DISTINCT e.id, e.nom, e.prenom, e.numero_etudiant, e.groupe
+                FROM etudiants e
+                JOIN inscriptions i ON i.etudiant_id=e.id
+                JOIN offres_inscription o ON o.id=i.offre_id
+                WHERE e.actif=1
+                  AND i.statut='Inscrit'
+                  AND lower(o.activite)=lower(?)
+                ORDER BY e.nom, e.prenom
+                """,
+                (activity,),
+            )
+        if not registered.empty:
+            return registered
+
     if group:
-        return qdf(
-            "SELECT id, nom, prenom, numero_etudiant, groupe "
-            "FROM etudiants WHERE actif=1 AND groupe=? ORDER BY nom, prenom",
+        legacy_group = qdf(
+            """
+            SELECT id, nom, prenom, numero_etudiant, groupe
+            FROM etudiants
+            WHERE actif=1 AND lower(coalesce(groupe,''))=lower(?)
+            ORDER BY nom, prenom
+            """,
             (group,),
         )
+        if not legacy_group.empty:
+            return legacy_group
+
+    registrations = qdf(
+        "SELECT COUNT(*) AS n FROM inscriptions WHERE statut='Inscrit'"
+    )
+    if not registrations.empty and int(registrations.iloc[0]["n"] or 0) > 0:
+        return pd.DataFrame(
+            columns=["id", "nom", "prenom", "numero_etudiant", "groupe"]
+        )
+
     return qdf(
-        "SELECT id, nom, prenom, numero_etudiant, groupe "
-        "FROM etudiants WHERE actif=1 ORDER BY nom, prenom"
+        """
+        SELECT id, nom, prenom, numero_etudiant, groupe
+        FROM etudiants
+        WHERE actif=1
+        ORDER BY nom, prenom
+        """
     )
 
 
