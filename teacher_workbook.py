@@ -50,6 +50,93 @@ def _advance_index(index, total, step=1):
     return max(0, min(int(index) + int(step), int(total) - 1))
 
 
+def _float_or_none(value):
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalized_note_20(note, bareme):
+    note = _float_or_none(note)
+    bareme = _float_or_none(bareme)
+    if note is None or bareme is None or bareme <= 0:
+        return None
+    return note / bareme * 20.0
+
+
+def _weighted_average_20(items):
+    """Moyenne pondérée normalisée /20 de tuples (note, barème, coefficient)."""
+    total = 0.0
+    weights = 0.0
+    for note, bareme, coefficient in items:
+        normalized = _normalized_note_20(note, bareme)
+        coefficient = _float_or_none(coefficient)
+        if normalized is None or coefficient is None or coefficient <= 0:
+            continue
+        total += normalized * coefficient
+        weights += coefficient
+    return (total / weights) if weights else None
+
+
+def _note_changed(old_note, new_note):
+    old_note = _float_or_none(old_note)
+    new_note = _float_or_none(new_note)
+    if old_note is None or new_note is None:
+        return old_note != new_note
+    return abs(old_note - new_note) > 1e-9
+
+
+def _evaluation_identity(row):
+    return (_clean(row.get("date_eval")), _clean(row.get("intitule")))
+
+
+def _gradebook_assessments(evaluations):
+    """Déduit les colonnes d'évaluation sans créer de nouvelle table."""
+    if evaluations is None or evaluations.empty:
+        return []
+    work = evaluations.copy()
+    if "id" in work.columns:
+        work = work.sort_values(
+            ["date_eval", "id"],
+            ascending=[False, False],
+            kind="stable",
+        )
+    else:
+        work = work.sort_values("date_eval", ascending=False, kind="stable")
+
+    result = []
+    seen = set()
+    for _, row in work.iterrows():
+        identity = _evaluation_identity(row)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        bareme = _float_or_none(row.get("bareme"))
+        coefficient = _float_or_none(row.get("coefficient"))
+        result.append(
+            {
+                "identity": identity,
+                "date_eval": identity[0],
+                "intitule": identity[1] or "Évaluation",
+                "bareme": bareme if bareme and bareme > 0 else 20.0,
+                "coefficient": (
+                    coefficient if coefficient and coefficient > 0 else 1.0
+                ),
+            }
+        )
+    for idx, item in enumerate(result, start=1):
+        item["column"] = f"eval_{idx}"
+    return result
+
+
 def inject_workbook_navigation(options):
     """Ajoute le Carnet uniquement dans la navigation enseignant."""
     original_is_tuple = isinstance(options, tuple)
@@ -406,7 +493,337 @@ def _render_attendance(st, qdf, upsert_presence, session, students):
             st.rerun()
 
 
-def _render_notes(st, qdf, exec_sql, session, students):
+def _render_gradebook_class(st, qdf, exec_sql, session, students):
+    sid = int(session["id"])
+    activity = _clean(session.get("activite"))
+    evaluations = qdf(
+        """
+        SELECT *
+        FROM evaluations
+        WHERE activite=?
+        ORDER BY date_eval DESC, id DESC
+        """,
+        (activity,),
+    )
+    if evaluations.empty:
+        st.info(
+            "Aucune évaluation pour cette activité. "
+            "Crée la première dans l’onglet « Saisie évaluation »."
+        )
+        return
+
+    all_assessments = _gradebook_assessments(evaluations)
+    total_assessments = len(all_assessments)
+    count_options = sorted(
+        {
+            min(total_assessments, value)
+            for value in (5, 8, 12)
+            if min(total_assessments, value) > 0
+        }
+    )
+    if total_assessments not in count_options:
+        count_options.append(total_assessments)
+
+    visible_count = st.selectbox(
+        "Évaluations visibles",
+        count_options,
+        index=len(count_options) - 1 if total_assessments <= 8 else min(1, len(count_options) - 1),
+        format_func=lambda value: (
+            f"Toutes ({value})" if value == total_assessments else f"{value} dernières"
+        ),
+        key=f"gradebook_visible_count_{sid}_{activity}",
+    )
+    assessments = all_assessments[: int(visible_count)]
+
+    student_ids = [int(x) for x in students["id"].tolist()]
+    student_id_set = set(student_ids)
+
+    ordered_evaluations = evaluations.sort_values("id", ascending=False, kind="stable")
+    eval_map = {}
+    for _, row in ordered_evaluations.iterrows():
+        eid = int(row["etudiant_id"])
+        if eid not in student_id_set:
+            continue
+        key = (eid, _evaluation_identity(row))
+        if key not in eval_map:
+            eval_map[key] = row
+
+    all_eval_items = {eid: [] for eid in student_ids}
+    seen_student_assessments = set()
+    for _, row in ordered_evaluations.iterrows():
+        eid = int(row["etudiant_id"])
+        if eid not in student_id_set:
+            continue
+        identity = _evaluation_identity(row)
+        unique_key = (eid, identity)
+        if unique_key in seen_student_assessments:
+            continue
+        seen_student_assessments.add(unique_key)
+        all_eval_items[eid].append(
+            (
+                row.get("note"),
+                row.get("bareme"),
+                row.get("coefficient"),
+            )
+        )
+
+    performances = qdf(
+        """
+        SELECT id, etudiant_id, intitule, date_perf, valeur, unite, note_calculee
+        FROM performances
+        WHERE activite=?
+        ORDER BY date_perf DESC, id DESC
+        """,
+        (activity,),
+    )
+    performance_map = {}
+    if not performances.empty:
+        for _, row in performances.iterrows():
+            eid = int(row["etudiant_id"])
+            if eid not in student_id_set or eid in performance_map:
+                continue
+            if _float_or_none(row.get("note_calculee")) is not None:
+                performance_map[eid] = row
+
+    comps = qdf(
+        "SELECT id, code, libelle FROM competences WHERE activite=? ORDER BY code",
+        (activity,),
+    )
+    acquisitions = qdf(
+        """
+        SELECT a.etudiant_id, a.competence_id, a.niveau
+        FROM acquisitions a
+        JOIN competences c ON c.id=a.competence_id
+        WHERE c.activite=?
+        """,
+        (activity,),
+    )
+    total_competences = len(comps)
+    acquired_count = {eid: 0 for eid in student_ids}
+    if not acquisitions.empty:
+        for _, row in acquisitions.iterrows():
+            eid = int(row["etudiant_id"])
+            if (
+                eid in student_id_set
+                and _clean(row.get("niveau")) in {"Acquis", "Maîtrisé"}
+            ):
+                acquired_count[eid] += 1
+
+    table_rows = []
+    for _, student in students.iterrows():
+        eid = int(student["id"])
+        item = {
+            "etudiant_id": eid,
+            "Étudiant": f"{student['nom']} {student['prenom']}",
+        }
+        for assessment in assessments:
+            old = eval_map.get((eid, assessment["identity"]))
+            item[assessment["column"]] = (
+                _float_or_none(old.get("note")) if old is not None else None
+            )
+        item["Moyenne /20"] = _weighted_average_20(all_eval_items[eid])
+        perf = performance_map.get(eid)
+        item["Perf. /20"] = (
+            _float_or_none(perf.get("note_calculee")) if perf is not None else None
+        )
+        item["Compétences %"] = (
+            round((acquired_count[eid] / total_competences) * 100)
+            if total_competences
+            else None
+        )
+        table_rows.append(item)
+
+    frame = pd.DataFrame(table_rows)
+
+    averages = pd.to_numeric(frame["Moyenne /20"], errors="coerce").dropna()
+    perf_values = pd.to_numeric(frame["Perf. /20"], errors="coerce").dropna()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Évaluations", total_assessments)
+    c2.metric(
+        "Moyenne groupe /20",
+        f"{averages.mean():.2f}" if len(averages) else "—",
+    )
+    c3.metric(
+        "Performance groupe /20",
+        f"{perf_values.mean():.2f}" if len(perf_values) else "—",
+    )
+    comp_values = pd.to_numeric(frame["Compétences %"], errors="coerce").dropna()
+    c4.metric(
+        "Compétences acquises",
+        f"{comp_values.mean():.0f}%" if len(comp_values) else "—",
+    )
+
+    st.caption(
+        "La moyenne /20 tient compte de toutes les évaluations de l’activité "
+        "et de leurs coefficients. Les colonnes affichent les évaluations les plus récentes."
+    )
+
+    config = {
+        "etudiant_id": None,
+        "Étudiant": st.column_config.TextColumn(
+            "Étudiant", width="medium", pinned=True
+        ),
+        "Moyenne /20": st.column_config.NumberColumn(
+            "Moy. /20", format="%.2f", width="small"
+        ),
+        "Perf. /20": st.column_config.NumberColumn(
+            "Perf. /20", format="%.2f", width="small"
+        ),
+        "Compétences %": st.column_config.ProgressColumn(
+            "Comp. %",
+            min_value=0,
+            max_value=100,
+            format="%d%%",
+            width="small",
+        ),
+    }
+    for assessment in assessments:
+        date_label = assessment["date_eval"]
+        if len(date_label) >= 10:
+            date_label = f"{date_label[8:10]}/{date_label[5:7]}"
+        config[assessment["column"]] = st.column_config.NumberColumn(
+            f"{date_label} • {assessment['intitule']}",
+            help=(
+                f"Barème : /{assessment['bareme']:g} • "
+                f"Coefficient : {assessment['coefficient']:g}"
+            ),
+            min_value=0.0,
+            max_value=float(assessment["bareme"]),
+            step=0.25,
+            format="%.2f",
+            width="small",
+        )
+
+    disabled = [
+        "etudiant_id",
+        "Étudiant",
+        "Moyenne /20",
+        "Perf. /20",
+        "Compétences %",
+    ]
+
+    with st.form(f"gradebook_class_form_{sid}_{activity}"):
+        edited = st.data_editor(
+            frame,
+            hide_index=True,
+            use_container_width=True,
+            height=min(780, 42 + 36 * max(1, len(frame))),
+            disabled=disabled,
+            column_config=config,
+            key=f"gradebook_class_grid_{sid}_{activity}_{visible_count}",
+        )
+        save = st.form_submit_button(
+            "💾 Enregistrer le cahier de notes",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if save:
+        changes = 0
+        for _, row in edited.iterrows():
+            eid = int(row["etudiant_id"])
+            for assessment in assessments:
+                col = assessment["column"]
+                new_note = _float_or_none(row[col])
+                old = eval_map.get((eid, assessment["identity"]))
+                old_note = (
+                    _float_or_none(old.get("note")) if old is not None else None
+                )
+                if not _note_changed(old_note, new_note):
+                    continue
+                if old is not None:
+                    exec_sql(
+                        "UPDATE evaluations SET note=? WHERE id=?",
+                        (new_note, int(old["id"])),
+                    )
+                elif new_note is not None:
+                    exec_sql(
+                        """
+                        INSERT INTO evaluations(
+                            etudiant_id, activite, intitule, date_eval,
+                            note, bareme, coefficient, commentaire
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            eid,
+                            activity,
+                            assessment["intitule"],
+                            assessment["date_eval"],
+                            new_note,
+                            float(assessment["bareme"]),
+                            float(assessment["coefficient"]),
+                            "",
+                        ),
+                    )
+                changes += 1
+        st.success(f"{changes} note(s) mise(s) à jour.")
+        st.rerun()
+
+    st.markdown("#### 🔗 Lecture croisée étudiant")
+    focus_eid = st.selectbox(
+        "Étudiant à examiner",
+        student_ids,
+        format_func=lambda value: next(
+            (
+                f"{r['nom']} {r['prenom']}"
+                for _, r in students.iterrows()
+                if int(r["id"]) == int(value)
+            ),
+            str(value),
+        ),
+        key=f"gradebook_focus_{sid}_{activity}",
+    )
+
+    focus_average = _weighted_average_20(all_eval_items.get(int(focus_eid), []))
+    focus_perf = performance_map.get(int(focus_eid))
+    focus_perf_note = (
+        _float_or_none(focus_perf.get("note_calculee"))
+        if focus_perf is not None
+        else None
+    )
+    focus_comp = (
+        round((acquired_count[int(focus_eid)] / total_competences) * 100)
+        if total_competences
+        else None
+    )
+
+    f1, f2, f3 = st.columns(3)
+    f1.metric(
+        "Notes",
+        f"{focus_average:.2f}/20" if focus_average is not None else "—",
+    )
+    f2.metric(
+        "Performance",
+        f"{focus_perf_note:.2f}/20" if focus_perf_note is not None else "—",
+    )
+    f3.metric(
+        "Compétences",
+        f"{focus_comp}%" if focus_comp is not None else "—",
+    )
+    if focus_perf is not None:
+        detail = (
+            f"Dernière performance : {_clean(focus_perf.get('intitule'))}"
+            f" • {_clean(focus_perf.get('date_perf'))}"
+        )
+        value = _float_or_none(focus_perf.get("valeur"))
+        unit = _clean(focus_perf.get("unite"))
+        if value is not None:
+            detail += f" • {value:g} {unit}".rstrip()
+        st.caption(detail)
+
+    if st.button(
+        "👤 Préparer la fiche étudiant",
+        key=f"gradebook_open_student_{sid}_{activity}",
+        use_container_width=True,
+    ):
+        st.session_state[f"workbook_student_card_{sid}"] = int(focus_eid)
+        st.success(
+            "Étudiant sélectionné. Ouvre l’onglet « Fiche étudiant » "
+            "pour retrouver son historique complet."
+        )
+
+
+def _render_single_evaluation(st, qdf, exec_sql, session, students):
     sid = int(session["id"])
     activity = _clean(session.get("activite"))
     session_date = _clean(session.get("date_seance"))
@@ -563,6 +980,16 @@ def _render_notes(st, qdf, exec_sql, session, students):
                 )
         st.success("Notes enregistrées.")
         st.rerun()
+
+
+def _render_notes(st, qdf, exec_sql, session, students):
+    tab_class, tab_single = st.tabs(
+        ["📊 Vue classe", "✍️ Saisie évaluation"]
+    )
+    with tab_class:
+        _render_gradebook_class(st, qdf, exec_sql, session, students)
+    with tab_single:
+        _render_single_evaluation(st, qdf, exec_sql, session, students)
 
 
 def _render_competences(st, qdf, upsert_acquisition, session, students):
