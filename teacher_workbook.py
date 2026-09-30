@@ -5,9 +5,10 @@ tableaux éditables, actions de groupe, synthèses immédiates et fiche étudian
 Il réutilise le schéma V13 existant afin de ne pas casser les données historiques.
 """
 
-from datetime import date as _date, timedelta as _timedelta
+from datetime import date as _date, datetime as _datetime, timedelta as _timedelta
 from io import BytesIO as _BytesIO
 import secrets as _secrets
+import unicodedata as _unicodedata
 
 import pandas as pd
 
@@ -52,7 +53,7 @@ WORKBOOK_ACTIVITIES = [
 
 
 def _student_import_template():
-    """Modèle d'import enseignant ; l'email reste facultatif."""
+    """Modèle complet : étudiants + création automatique des créneaux."""
     return pd.DataFrame(
         [
             {
@@ -61,6 +62,13 @@ def _student_import_template():
                 "email": "",
                 "numero_etudiant": "20260001",
                 "groupe": "NAT-A",
+                "activite": "Natation",
+                "creneau": "Natation tous niveaux",
+                "jour_horaire": "Lundi 18h00",
+                "lieu": "Piscine universitaire",
+                "UET": "X",
+                "UECF": "",
+                "Non noté": "",
             },
             {
                 "nom": "MARTIN",
@@ -68,52 +76,122 @@ def _student_import_template():
                 "email": "lucas.martin@exemple.fr",
                 "numero_etudiant": "20260002",
                 "groupe": "RUG-B",
+                "activite": "Rugby",
+                "creneau": "Rugby tous niveaux",
+                "jour_horaire": "Jeudi 18h00",
+                "lieu": "Stade universitaire",
+                "UET": "",
+                "UECF": "",
+                "Non noté": "X",
             },
         ]
     )
 
 
+def _canonical_import_key(value):
+    text = str(value or "").strip().lower()
+    text = "".join(
+        char
+        for char in _unicodedata.normalize("NFKD", text)
+        if not _unicodedata.combining(char)
+    )
+    for char in (" ", "-", "/", "\\", "°", "'", "’"):
+        text = text.replace(char, "_")
+    while "__" in text:
+        text = text.replace("__", "_")
+    return text.strip("_")
+
+
 def _normalize_student_import_frame(frame):
-    """Normalise les intitulés usuels de colonnes CSV/Excel."""
+    """Normalise les colonnes des modèles récents et historiques SUAPS."""
     imported = frame.copy()
     aliases = {}
+    mapping = {
+        "nom": "nom",
+        "prenom": "prenom",
+        "mail": "email",
+        "e_mail": "email",
+        "email": "email",
+        "numero_etudiant": "numero_etudiant",
+        "numero": "numero_etudiant",
+        "n_etudiant": "numero_etudiant",
+        "num_etudiant": "numero_etudiant",
+        "identifiant": "numero_etudiant",
+        "ine": "numero_etudiant",
+        "groupe": "groupe",
+        "group": "groupe",
+        "activite": "activite",
+        "creneau": "creneau",
+        "jour_horaire": "jour_horaire",
+        "jour_horaire_": "jour_horaire",
+        "horaire": "jour_horaire",
+        "lieu": "lieu",
+        "uet": "uet",
+        "uecf": "uecf",
+        "non_note": "non_note",
+        "non_notee": "non_note",
+        "modalite": "modalite",
+    }
     for column in imported.columns:
-        key = str(column).strip().lower()
-        for src, dst in (
-            ("é", "e"),
-            ("è", "e"),
-            ("ê", "e"),
-            ("à", "a"),
-        ):
-            key = key.replace(src, dst)
-        key = (
-            key.replace(" ", "_")
-            .replace("-", "_")
-            .replace("°", "")
-        )
-        mapping = {
-            "nom": "nom",
-            "prenom": "prenom",
-            "mail": "email",
-            "e_mail": "email",
-            "email": "email",
-            "numero_etudiant": "numero_etudiant",
-            "numero": "numero_etudiant",
-            "n_etudiant": "numero_etudiant",
-            "num_etudiant": "numero_etudiant",
-            "ine": "numero_etudiant",
-            "groupe": "groupe",
-            "group": "groupe",
-        }
+        key = _canonical_import_key(column)
         if key in mapping:
             aliases[column] = mapping[key]
     return imported.rename(columns=aliases)
 
 
 def _clean_import_value(value):
-    if pd.isna(value):
+    if value is None:
         return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
     return str(value).strip()
+
+
+def _is_import_marked(value):
+    text = _canonical_import_key(_clean_import_value(value))
+    if text in {"", "0", "non", "no", "false", "faux", "nan"}:
+        return False
+    return True
+
+
+def _import_modality(row):
+    explicit = _canonical_import_key(_clean_import_value(row.get("modalite", "")))
+    explicit_map = {
+        "uet": "UET",
+        "uecf": "UECF",
+        "non_note": "Non noté",
+        "non_notee": "Non noté",
+    }
+    if explicit in explicit_map:
+        return explicit_map[explicit]
+    if _is_import_marked(row.get("uet", "")):
+        return "UET"
+    if _is_import_marked(row.get("uecf", "")):
+        return "UECF"
+    if _is_import_marked(row.get("non_note", "")):
+        return "Non noté"
+    return "Non noté"
+
+
+def _offer_import_values(row):
+    activity = _clean_import_value(row.get("activite", ""))
+    title = _clean_import_value(row.get("creneau", ""))
+    if not activity and not title:
+        return None
+    if not activity:
+        activity = title
+    if not title:
+        title = activity
+    return {
+        "activite": activity,
+        "intitule": title,
+        "groupe": _clean_import_value(row.get("groupe", "")),
+        "jour_horaire": _clean_import_value(row.get("jour_horaire", "")),
+        "lieu": _clean_import_value(row.get("lieu", "")),
+    }
 
 
 def _render_workbook_quick_actions(st, qdf, exec_sql):
@@ -217,7 +295,12 @@ def _render_workbook_quick_actions(st, qdf, exec_sql):
 
     with st.expander("📥 Importer CSV / Excel", expanded=False):
         st.caption(
-            "Colonnes minimales : Nom et Prénom. Email, numéro étudiant et groupe sont facultatifs."
+            "Nom et Prénom sont obligatoires. Si activite + creneau sont présents, "
+            "le créneau est créé automatiquement s’il n’existe pas et l’étudiant y est inscrit."
+        )
+        st.caption(
+            "Compatibilité ancien modèle : identifiant, activite, creneau, jour_horaire, "
+            "UET, UECF et Non noté."
         )
         uploaded = st.file_uploader(
             "Fichier étudiants",
@@ -239,49 +322,93 @@ def _render_workbook_quick_actions(st, qdf, exec_sql):
                 )
                 if "nom" not in imported.columns or "prenom" not in imported.columns:
                     st.error("Le fichier doit contenir au minimum les colonnes Nom et Prénom.")
-                elif st.button(
-                    "Importer ces étudiants",
-                    type="primary",
-                    use_container_width=True,
-                    key="workbook_import_students_button",
+                else:
+                    slot_rows = [
+                        _offer_import_values(row)
+                        for _, row in imported.iterrows()
+                    ]
+                    slot_keys = {
+                        (
+                            item["activite"].casefold(),
+                            item["intitule"].casefold(),
+                        )
+                        for item in slot_rows
+                        if item is not None
+                    }
+                    if slot_keys:
+                        st.info(
+                            f"{len(slot_keys)} créneau(x) détecté(s) dans le fichier. "
+                            "Ils seront créés uniquement s’ils n’existent pas déjà."
+                        )
+
+                if (
+                    "nom" in imported.columns
+                    and "prenom" in imported.columns
+                    and st.button(
+                        "Importer étudiants + créneaux",
+                        type="primary",
+                        use_container_width=True,
+                        key="workbook_import_students_button",
+                    )
                 ):
                     added = 0
                     updated = 0
                     ignored = 0
+                    offers_created = 0
+                    registrations = 0
+
                     for _, row in imported.iterrows():
                         name = _clean_import_value(row.get("nom", ""))
                         firstname = _clean_import_value(row.get("prenom", ""))
                         if not name or not firstname:
                             ignored += 1
                             continue
+
                         email = _clean_import_value(row.get("email", ""))
                         number = _clean_import_value(row.get("numero_etudiant", ""))
                         group_value = _clean_import_value(row.get("groupe", ""))
-                        existing = qdf(
-                            "SELECT id FROM etudiants WHERE numero_etudiant=?",
-                            (number,),
-                        ) if number else pd.DataFrame()
+
+                        existing = (
+                            qdf(
+                                """
+                                SELECT id, email, numero_etudiant, groupe
+                                FROM etudiants
+                                WHERE numero_etudiant=?
+                                """,
+                                (number,),
+                            )
+                            if number
+                            else pd.DataFrame()
+                        )
                         if existing.empty:
                             existing = qdf(
                                 """
-                                SELECT id FROM etudiants
+                                SELECT id, email, numero_etudiant, groupe
+                                FROM etudiants
                                 WHERE lower(nom)=lower(?) AND lower(prenom)=lower(?)
+                                ORDER BY id
+                                LIMIT 1
                                 """,
                                 (name, firstname),
                             )
+
                         if not existing.empty:
+                            old = existing.iloc[0]
+                            student_id = int(old["id"])
                             exec_sql(
                                 """
                                 UPDATE etudiants
-                                SET nom=?, prenom=?, email=?, groupe=?, actif=1
+                                SET nom=?, prenom=?, email=?, numero_etudiant=?,
+                                    groupe=?, actif=1
                                 WHERE id=?
                                 """,
                                 (
                                     name,
                                     firstname,
-                                    email,
-                                    group_value,
-                                    int(existing.iloc[0]["id"]),
+                                    email or _clean_import_value(old.get("email", "")),
+                                    number or _clean_import_value(old.get("numero_etudiant", "")) or None,
+                                    group_value or _clean_import_value(old.get("groupe", "")),
+                                    student_id,
                                 ),
                             )
                             updated += 1
@@ -301,16 +428,159 @@ def _render_workbook_quick_actions(st, qdf, exec_sql):
                                 ),
                             )
                             added += 1
+                            created_student = (
+                                qdf(
+                                    """
+                                    SELECT id FROM etudiants
+                                    WHERE numero_etudiant=?
+                                    ORDER BY id DESC LIMIT 1
+                                    """,
+                                    (number,),
+                                )
+                                if number
+                                else qdf(
+                                    """
+                                    SELECT id FROM etudiants
+                                    WHERE lower(nom)=lower(?) AND lower(prenom)=lower(?)
+                                    ORDER BY id DESC LIMIT 1
+                                    """,
+                                    (name, firstname),
+                                )
+                            )
+                            if created_student.empty:
+                                ignored += 1
+                                continue
+                            student_id = int(created_student.iloc[0]["id"])
+
+                        offer_values = _offer_import_values(row)
+                        if offer_values is None:
+                            continue
+
+                        offer = qdf(
+                            """
+                            SELECT id, groupe, jour_horaire, lieu
+                            FROM offres_inscription
+                            WHERE lower(activite)=lower(?) AND lower(intitule)=lower(?)
+                            ORDER BY id
+                            LIMIT 1
+                            """,
+                            (
+                                offer_values["activite"],
+                                offer_values["intitule"],
+                            ),
+                        )
+
+                        if offer.empty:
+                            exec_sql(
+                                """
+                                INSERT INTO offres_inscription(
+                                    activite,intitule,groupe,jour_horaire,lieu,
+                                    capacite,ouverte,date_debut,date_fin,token
+                                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                                """,
+                                (
+                                    offer_values["activite"],
+                                    offer_values["intitule"],
+                                    offer_values["groupe"],
+                                    offer_values["jour_horaire"],
+                                    offer_values["lieu"],
+                                    0,
+                                    1,
+                                    None,
+                                    None,
+                                    _secrets.token_urlsafe(20),
+                                ),
+                            )
+                            offers_created += 1
+                            offer = qdf(
+                                """
+                                SELECT id, groupe, jour_horaire, lieu
+                                FROM offres_inscription
+                                WHERE lower(activite)=lower(?) AND lower(intitule)=lower(?)
+                                ORDER BY id DESC
+                                LIMIT 1
+                                """,
+                                (
+                                    offer_values["activite"],
+                                    offer_values["intitule"],
+                                ),
+                            )
+                        else:
+                            old_offer = offer.iloc[0]
+                            new_group = (
+                                _clean_import_value(old_offer.get("groupe", ""))
+                                or offer_values["groupe"]
+                            )
+                            new_schedule = (
+                                _clean_import_value(old_offer.get("jour_horaire", ""))
+                                or offer_values["jour_horaire"]
+                            )
+                            new_location = (
+                                _clean_import_value(old_offer.get("lieu", ""))
+                                or offer_values["lieu"]
+                            )
+                            exec_sql(
+                                """
+                                UPDATE offres_inscription
+                                SET groupe=?, jour_horaire=?, lieu=?
+                                WHERE id=?
+                                """,
+                                (
+                                    new_group,
+                                    new_schedule,
+                                    new_location,
+                                    int(old_offer["id"]),
+                                ),
+                            )
+
+                        if offer.empty:
+                            ignored += 1
+                            continue
+
+                        offer_id = int(offer.iloc[0]["id"])
+                        modality = _import_modality(row)
+                        exec_sql(
+                            """
+                            INSERT INTO inscriptions(
+                                offre_id,etudiant_id,modalite,date_inscription,
+                                statut,commentaire
+                            ) VALUES(?,?,?,?,?,?)
+                            ON CONFLICT(offre_id,etudiant_id)
+                            DO UPDATE SET
+                                modalite=excluded.modalite,
+                                date_inscription=excluded.date_inscription,
+                                statut='Inscrit',
+                                commentaire=excluded.commentaire
+                            """,
+                            (
+                                offer_id,
+                                student_id,
+                                modality,
+                                _datetime.now().isoformat(timespec="seconds"),
+                                "Inscrit",
+                                "Import CSV/Excel — Carnet enseignant",
+                            ),
+                        )
+                        registrations += 1
+
                     st.success(
-                        f"Import terminé : {added} ajouté(s), {updated} mis à jour, {ignored} ignoré(s)."
+                        "Import terminé : "
+                        f"{added} étudiant(s) ajouté(s), "
+                        f"{updated} mis à jour, "
+                        f"{offers_created} créneau(x) créé(s), "
+                        f"{registrations} inscription(s) traitée(s), "
+                        f"{ignored} ligne(s) ignorée(s)."
                     )
                     st.rerun()
             except Exception as exc:
-                st.error(f"Erreur de lecture : {exc}")
+                st.error(f"Erreur d’import : {exc}")
 
     with st.expander("📄 Télécharger le modèle", expanded=False):
         template = _student_import_template()
-        st.caption("Email facultatif • Nom et Prénom obligatoires")
+        st.caption(
+            "Email facultatif • Nom et Prénom obligatoires • "
+            "activite + creneau = création/inscription automatique"
+        )
         st.dataframe(template, hide_index=True, use_container_width=True)
         output = _BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -331,7 +601,6 @@ def _render_workbook_quick_actions(st, qdf, exec_sql):
             use_container_width=True,
             key="workbook_download_csv_template",
         )
-
 
 
 def _attendance_display(status):

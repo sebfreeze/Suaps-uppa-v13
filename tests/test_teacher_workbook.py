@@ -13,6 +13,8 @@ from teacher_workbook import (
     _rubric_total_20,
     _normalize_student_import_frame,
     _student_import_template,
+    _import_modality,
+    _offer_import_values,
     _score_from_20,
     _weighted_average_20,
     inject_workbook_navigation,
@@ -185,23 +187,85 @@ def test_attendance_score_6_ignores_justified_and_exempt():
     assert _attendance_score_6(["Justifié", "Dispensé"]) is None
 
 
-def test_student_import_template_keeps_email_optional():
+def test_student_import_template_keeps_email_optional_and_has_slot_fields():
     template = _student_import_template()
-    assert list(template.columns) == [
-        "nom", "prenom", "email", "numero_etudiant", "groupe"
-    ]
     assert template.loc[0, "email"] == ""
     assert template.loc[0, "nom"]
     assert template.loc[0, "prenom"]
+    assert template.loc[0, "activite"] == "Natation"
+    assert template.loc[0, "creneau"] == "Natation tous niveaux"
+    assert template.loc[0, "UET"] == "X"
 
 
-def test_student_import_normalizes_common_column_names():
+def test_student_import_normalizes_current_and_historical_column_names():
     import pandas as pd
 
     frame = pd.DataFrame(
-        columns=["Nom", "Prénom", "Mail", "N° étudiant", "Groupe"]
+        columns=[
+            "Nom",
+            "Prénom",
+            "Mail",
+            "Identifiant",
+            "Groupe",
+            "Activité",
+            "Créneau",
+            "Jour / horaire",
+            "Lieu",
+            "UET",
+            "UECF",
+            "Non noté",
+        ]
     )
     result = _normalize_student_import_frame(frame)
     assert list(result.columns) == [
-        "nom", "prenom", "email", "numero_etudiant", "groupe"
+        "nom",
+        "prenom",
+        "email",
+        "numero_etudiant",
+        "groupe",
+        "activite",
+        "creneau",
+        "jour_horaire",
+        "lieu",
+        "uet",
+        "uecf",
+        "non_note",
     ]
+
+
+def test_import_modality_uses_old_marker_columns():
+    import pandas as pd
+
+    assert _import_modality(pd.Series({"uet": "X"})) == "UET"
+    assert _import_modality(pd.Series({"uecf": "x"})) == "UECF"
+    assert _import_modality(pd.Series({"non_note": "X"})) == "Non noté"
+    assert _import_modality(pd.Series({})) == "Non noté"
+
+
+def test_offer_import_values_accepts_activity_and_slot():
+    import pandas as pd
+
+    values = _offer_import_values(
+        pd.Series(
+            {
+                "activite": "Course à pied",
+                "creneau": "Lundi 19h15",
+                "jour_horaire": "Lundi 19h15–20h45",
+                "lieu": "SALP",
+                "groupe": "CAP-A",
+            }
+        )
+    )
+    assert values == {
+        "activite": "Course à pied",
+        "intitule": "Lundi 19h15",
+        "groupe": "CAP-A",
+        "jour_horaire": "Lundi 19h15–20h45",
+        "lieu": "SALP",
+    }
+
+
+def test_offer_import_values_skips_plain_student_file():
+    import pandas as pd
+
+    assert _offer_import_values(pd.Series({"nom": "DUPONT"})) is None
