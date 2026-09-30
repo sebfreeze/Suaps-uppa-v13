@@ -72,6 +72,23 @@ def _attendance_source(row):
     return "Manuel"
 
 
+def _presence_comment_for_save(old_row, new_status, observation):
+    """Préserve la trace QR/NFC tant que l'enseignant ne modifie pas la présence."""
+    observation = _clean(observation)
+    if observation:
+        return observation
+    if old_row is None:
+        return ""
+    old_status = _clean(old_row.get("statut"))
+    old_comment = _clean(old_row.get("commentaire"))
+    if (
+        new_status == old_status
+        and ("QR" in old_comment.upper() or "NFC" in old_comment.upper())
+    ):
+        return old_comment
+    return ""
+
+
 def _render_header(st, session, students):
     activity = _clean(session.get("activite")) or "Activité"
     group = _clean(session.get("groupe")) or "Tous"
@@ -203,11 +220,17 @@ def _render_attendance(st, qdf, upsert_presence, session, students):
 
     if save:
         for _, row in edited.iterrows():
+            eid = int(row["etudiant_id"])
+            status = _clean(row["Statut"]) or "Absent"
             upsert_presence(
                 sid,
-                int(row["etudiant_id"]),
-                _clean(row["Statut"]) or "Absent",
-                _clean(row["Observation"]),
+                eid,
+                status,
+                _presence_comment_for_save(
+                    pmap.get(eid),
+                    status,
+                    row["Observation"],
+                ),
             )
         st.success("Appel enregistré.")
         st.rerun()
@@ -633,8 +656,11 @@ def _render_student_card(st, qdf, session, students):
 
     competence_rate = None
     if not acq.empty:
+        session_activity = _clean(session.get("activite"))
+        activity_acq = acq[acq["activite"].astype(str) == session_activity]
+        metric_source = activity_acq if not activity_acq.empty else acq
         competence_rate = round(
-            float(acq["niveau"].isin(["Acquis", "Maîtrisé"]).mean()) * 100
+            float(metric_source["niveau"].isin(["Acquis", "Maîtrisé"]).mean()) * 100
         )
 
     c1, c2, c3 = st.columns(3)
