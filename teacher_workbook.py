@@ -19,6 +19,36 @@ COMPETENCE_LEVELS = [
     "Maîtrisé",
 ]
 
+ATTENDANCE_ICONS = {
+    "Présent": "✅",
+    "Absent": "❌",
+    "Justifié": "🟠",
+    "Dispensé": "🔵",
+}
+
+COMPETENCE_ICONS = {
+    "Non évalué": "⚪",
+    "En cours d’acquisition": "🟠",
+    "Acquis": "🟢",
+    "Maîtrisé": "🔵",
+}
+
+
+def _attendance_display(status):
+    status = _clean(status) or "Non renseigné"
+    return f"{ATTENDANCE_ICONS.get(status, '⚪')} {status}"
+
+
+def _competence_display(level):
+    level = _clean(level) or "Non évalué"
+    return f"{COMPETENCE_ICONS.get(level, '⚪')} {level}"
+
+
+def _advance_index(index, total, step=1):
+    if total <= 0:
+        return 0
+    return max(0, min(int(index) + int(step), int(total) - 1))
+
 
 def inject_workbook_navigation(options):
     """Ajoute le Carnet uniquement dans la navigation enseignant."""
@@ -89,6 +119,17 @@ def _presence_comment_for_save(old_row, new_status, observation):
     return ""
 
 
+def _express_presence_comment(old_row, new_status, observation):
+    """Commentaire d'appel express en conservant la provenance QR/NFC."""
+    observation = _clean(observation)
+    if observation:
+        return observation
+    preserved = _presence_comment_for_save(old_row, new_status, "")
+    if preserved:
+        return preserved
+    return "Appel express — Carnet enseignant"
+
+
 def _render_header(st, session, students):
     activity = _clean(session.get("activite")) or "Activité"
     group = _clean(session.get("groupe")) or "Tous"
@@ -123,13 +164,20 @@ def _render_attendance(st, qdf, upsert_presence, session, students):
     current_statuses = [
         _clean(row.get("statut"))
         for _, row in existing.iterrows()
-        if _clean(row.get("statut"))
+        if _clean(row.get("statut")) in ATTENDANCE_STATUSES
     ]
+    completed = len(current_statuses)
+    total_students = len(students)
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Présents", current_statuses.count("Présent"))
-    c2.metric("Absents", current_statuses.count("Absent"))
-    c3.metric("Justifiés", current_statuses.count("Justifié"))
-    c4.metric("Dispensés", current_statuses.count("Dispensé"))
+    c1.metric("✅ Présents", current_statuses.count("Présent"))
+    c2.metric("❌ Absents", current_statuses.count("Absent"))
+    c3.metric("🟠 Justifiés", current_statuses.count("Justifié"))
+    c4.metric("🔵 Dispensés", current_statuses.count("Dispensé"))
+
+    if total_students:
+        st.progress(min(1.0, completed / total_students))
+        st.caption(f"Appel renseigné : {completed}/{total_students} étudiant(s)")
 
     b1, b2 = st.columns(2)
     if b1.button(
@@ -139,11 +187,13 @@ def _render_attendance(st, qdf, upsert_presence, session, students):
         type="primary",
     ):
         for _, student in students.iterrows():
+            eid = int(student["id"])
+            old = pmap.get(eid)
             upsert_presence(
                 sid,
-                int(student["id"]),
+                eid,
                 "Présent",
-                "Appel manuel — Carnet enseignant",
+                _presence_comment_for_save(old, "Présent", ""),
             )
         st.success("Tous les étudiants ont été marqués présents.")
         st.rerun()
@@ -166,74 +216,206 @@ def _render_attendance(st, qdf, upsert_presence, session, students):
         st.success("Les étudiants non renseignés ont été marqués absents.")
         st.rerun()
 
-    table_rows = []
-    for _, student in students.iterrows():
-        eid = int(student["id"])
+    tab_fast, tab_grid = st.tabs(["⚡ Appel express", "📋 Grille complète"])
+
+    with tab_fast:
+        ids = [int(x) for x in students["id"].tolist()]
+        labels = {
+            int(row["id"]): f"{row['nom']} {row['prenom']}"
+            for _, row in students.iterrows()
+        }
+        cursor_key = f"workbook_attendance_cursor_{sid}"
+        cursor = int(st.session_state.get(cursor_key, 0))
+        cursor = _advance_index(cursor, len(ids), 0)
+        st.session_state[cursor_key] = cursor
+
+        jump_eid = st.selectbox(
+            "Aller à un étudiant",
+            ids,
+            index=cursor,
+            format_func=lambda value: labels[value],
+            key=f"workbook_attendance_jump_{sid}",
+        )
+        jump_index = ids.index(int(jump_eid))
+        if jump_index != cursor:
+            cursor = jump_index
+            st.session_state[cursor_key] = cursor
+
+        eid = ids[cursor]
+        student = students[students["id"] == eid].iloc[0]
         old = pmap.get(eid)
-        status = _clean(old.get("statut")) if old is not None else "Absent"
-        if status not in ATTENDANCE_STATUSES:
-            status = "Absent"
-        comment = _clean(old.get("commentaire")) if old is not None else ""
-        if comment in {"Auto-validation QR/NFC", "Appel manuel smartphone", "Appel manuel — Carnet enseignant"}:
-            comment = ""
-        table_rows.append(
-            {
-                "etudiant_id": eid,
-                "Étudiant": f"{student['nom']} {student['prenom']}",
-                "Statut": status,
-                "Source": _attendance_source(old),
-                "Observation": comment,
-            }
+        current_status = _clean(old.get("statut")) if old is not None else ""
+        source = _attendance_source(old)
+
+        st.markdown(f"### {cursor + 1}/{len(ids)} • {student['nom']} {student['prenom']}")
+        if _clean(student.get("numero_etudiant")):
+            st.caption(
+                f"N° {_clean(student.get('numero_etudiant'))} • "
+                f"{_clean(student.get('groupe')) or 'sans groupe'}"
+            )
+        st.info(
+            f"Statut actuel : {_attendance_display(current_status)}"
+            f" • origine : {source}"
         )
 
-    frame = pd.DataFrame(table_rows)
-    with st.form(f"workbook_attendance_form_{sid}"):
-        edited = st.data_editor(
-            frame,
-            hide_index=True,
-            use_container_width=True,
-            height=min(760, 42 + 36 * max(1, len(frame))),
-            disabled=["etudiant_id", "Étudiant", "Source"],
-            column_config={
-                "etudiant_id": None,
-                "Étudiant": st.column_config.TextColumn(
-                    "Étudiant", width="medium", pinned=True
-                ),
-                "Statut": st.column_config.SelectboxColumn(
-                    "Présence",
-                    options=ATTENDANCE_STATUSES,
-                    required=True,
-                    width="small",
-                ),
-                "Source": st.column_config.TextColumn("Origine", width="small"),
-                "Observation": st.column_config.TextColumn(
-                    "Observation", width="medium"
-                ),
-            },
-            key=f"workbook_attendance_grid_{sid}",
-        )
-        save = st.form_submit_button(
-            "💾 Enregistrer l’appel",
-            type="primary",
-            use_container_width=True,
+        system_comments = {
+            "Auto-validation QR/NFC",
+            "Appel manuel smartphone",
+            "Appel manuel — Carnet enseignant",
+            "Appel express — Carnet enseignant",
+        }
+        old_comment = _clean(old.get("commentaire")) if old is not None else ""
+        observation_default = "" if old_comment in system_comments else old_comment
+        observation = st.text_input(
+            "Observation",
+            value=observation_default,
+            placeholder="Optionnel : retard, motif, information utile…",
+            key=f"workbook_fast_obs_{sid}_{eid}",
         )
 
-    if save:
-        for _, row in edited.iterrows():
-            eid = int(row["etudiant_id"])
-            status = _clean(row["Statut"]) or "Absent"
+        r1c1, r1c2 = st.columns(2)
+        r2c1, r2c2 = st.columns(2)
+
+        clicked_status = None
+        if r1c1.button(
+            "✅ Présent",
+            key=f"fast_present_{sid}_{eid}",
+            use_container_width=True,
+            type="primary" if current_status == "Présent" else "secondary",
+        ):
+            clicked_status = "Présent"
+        if r1c2.button(
+            "❌ Absent",
+            key=f"fast_absent_{sid}_{eid}",
+            use_container_width=True,
+            type="primary" if current_status == "Absent" else "secondary",
+        ):
+            clicked_status = "Absent"
+        if r2c1.button(
+            "🟠 Justifié",
+            key=f"fast_justified_{sid}_{eid}",
+            use_container_width=True,
+            type="primary" if current_status == "Justifié" else "secondary",
+        ):
+            clicked_status = "Justifié"
+        if r2c2.button(
+            "🔵 Dispensé",
+            key=f"fast_exempt_{sid}_{eid}",
+            use_container_width=True,
+            type="primary" if current_status == "Dispensé" else "secondary",
+        ):
+            clicked_status = "Dispensé"
+
+        if clicked_status:
             upsert_presence(
                 sid,
                 eid,
-                status,
-                _presence_comment_for_save(
-                    pmap.get(eid),
-                    status,
-                    row["Observation"],
-                ),
+                clicked_status,
+                _express_presence_comment(old, clicked_status, observation),
             )
-        st.success("Appel enregistré.")
-        st.rerun()
+            if cursor < len(ids) - 1:
+                st.session_state[cursor_key] = _advance_index(cursor, len(ids), 1)
+            st.rerun()
+
+        n1, n2 = st.columns(2)
+        if n1.button(
+            "← Précédent",
+            key=f"fast_prev_{sid}_{eid}",
+            use_container_width=True,
+            disabled=cursor == 0,
+        ):
+            st.session_state[cursor_key] = _advance_index(cursor, len(ids), -1)
+            st.rerun()
+        if n2.button(
+            "Suivant →",
+            key=f"fast_next_{sid}_{eid}",
+            use_container_width=True,
+            disabled=cursor >= len(ids) - 1,
+        ):
+            st.session_state[cursor_key] = _advance_index(cursor, len(ids), 1)
+            st.rerun()
+
+        if cursor == len(ids) - 1 and current_status in ATTENDANCE_STATUSES:
+            st.success("Dernier étudiant de la liste : l’appel peut être vérifié dans la grille complète.")
+
+    with tab_grid:
+        table_rows = []
+        for _, student in students.iterrows():
+            eid = int(student["id"])
+            old = pmap.get(eid)
+            status = _clean(old.get("statut")) if old is not None else "Absent"
+            if status not in ATTENDANCE_STATUSES:
+                status = "Absent"
+            comment = _clean(old.get("commentaire")) if old is not None else ""
+            if comment in {
+                "Auto-validation QR/NFC",
+                "Appel manuel smartphone",
+                "Appel manuel — Carnet enseignant",
+                "Appel express — Carnet enseignant",
+            }:
+                comment = ""
+            table_rows.append(
+                {
+                    "etudiant_id": eid,
+                    "Étudiant": f"{student['nom']} {student['prenom']}",
+                    "Repère": _attendance_display(status),
+                    "Statut": status,
+                    "Source": _attendance_source(old),
+                    "Observation": comment,
+                }
+            )
+
+        frame = pd.DataFrame(table_rows)
+        with st.form(f"workbook_attendance_form_{sid}"):
+            edited = st.data_editor(
+                frame,
+                hide_index=True,
+                use_container_width=True,
+                height=min(760, 42 + 36 * max(1, len(frame))),
+                disabled=["etudiant_id", "Étudiant", "Repère", "Source"],
+                column_config={
+                    "etudiant_id": None,
+                    "Étudiant": st.column_config.TextColumn(
+                        "Étudiant", width="medium", pinned=True
+                    ),
+                    "Repère": st.column_config.TextColumn(
+                        "Repère", width="small"
+                    ),
+                    "Statut": st.column_config.SelectboxColumn(
+                        "Présence",
+                        options=ATTENDANCE_STATUSES,
+                        required=True,
+                        width="small",
+                    ),
+                    "Source": st.column_config.TextColumn("Origine", width="small"),
+                    "Observation": st.column_config.TextColumn(
+                        "Observation", width="medium"
+                    ),
+                },
+                key=f"workbook_attendance_grid_{sid}",
+            )
+            save = st.form_submit_button(
+                "💾 Enregistrer l’appel",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if save:
+            for _, row in edited.iterrows():
+                eid = int(row["etudiant_id"])
+                status = _clean(row["Statut"]) or "Absent"
+                upsert_presence(
+                    sid,
+                    eid,
+                    status,
+                    _presence_comment_for_save(
+                        pmap.get(eid),
+                        status,
+                        row["Observation"],
+                    ),
+                )
+            st.success("Appel enregistré.")
+            st.rerun()
 
 
 def _render_notes(st, qdf, exec_sql, session, students):
@@ -299,13 +481,23 @@ def _render_notes(st, qdf, exec_sql, session, students):
 
     frame = pd.DataFrame(table_rows)
     valid_notes = pd.to_numeric(frame["Note"], errors="coerce").dropna()
-    if len(valid_notes):
-        st.caption(
-            f"Moyenne actuelle : {valid_notes.mean():.2f}/{float(bareme):g} • "
-            f"{len(valid_notes)}/{len(frame)} note(s) saisie(s)"
-        )
-    else:
-        st.caption("Aucune note encore saisie pour cette évaluation.")
+    completion = len(valid_notes) / len(frame) if len(frame) else 0.0
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Saisies", f"{len(valid_notes)}/{len(frame)}")
+    m2.metric(
+        "Moyenne",
+        f"{valid_notes.mean():.2f}/{float(bareme):g}" if len(valid_notes) else "—",
+    )
+    m3.metric(
+        "Plus basse",
+        f"{valid_notes.min():.2f}" if len(valid_notes) else "—",
+    )
+    m4.metric(
+        "Plus haute",
+        f"{valid_notes.max():.2f}" if len(valid_notes) else "—",
+    )
+    st.progress(min(1.0, completion))
 
     with st.form(f"workbook_notes_form_{sid}"):
         edited = st.data_editor(
@@ -460,6 +652,16 @@ def _render_competences(st, qdf, upsert_acquisition, session, students):
         matrix_rows.append(item)
 
     matrix = pd.DataFrame(matrix_rows)
+
+    flat_levels = []
+    for code in code_to_id:
+        flat_levels.extend(matrix[code].tolist())
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("⚪ Non évalué", flat_levels.count("Non évalué"))
+    k2.metric("🟠 En cours", flat_levels.count("En cours d’acquisition"))
+    k3.metric("🟢 Acquis", flat_levels.count("Acquis"))
+    k4.metric("🔵 Maîtrisé", flat_levels.count("Maîtrisé"))
+
     config = {
         "etudiant_id": None,
         "Étudiant": st.column_config.TextColumn(
@@ -522,6 +724,18 @@ def _render_competences(st, qdf, upsert_acquisition, session, students):
                 changes += 1
         st.success(f"{changes} niveau(x) de compétence mis à jour.")
         st.rerun()
+
+    with st.expander("👁️ Vue synthétique", expanded=False):
+        visual = matrix.drop(columns=["etudiant_id"]).copy()
+        for code in code_to_id:
+            visual[code] = visual[code].map(_competence_display)
+        st.caption("⚪ Non évalué • 🟠 En cours • 🟢 Acquis • 🔵 Maîtrisé")
+        st.dataframe(
+            visual,
+            hide_index=True,
+            use_container_width=True,
+            height=min(680, 42 + 36 * max(1, len(visual))),
+        )
 
     st.markdown("#### Action de groupe")
     c1, c2, c3 = st.columns([2, 1.4, 2])
@@ -588,7 +802,19 @@ def _render_competences(st, qdf, upsert_acquisition, session, students):
             }
         )
     st.markdown("#### Progression du groupe")
-    st.dataframe(pd.DataFrame(progress_rows), hide_index=True, use_container_width=True)
+    st.dataframe(
+        pd.DataFrame(progress_rows),
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Progression": st.column_config.ProgressColumn(
+                "Progression",
+                min_value=0,
+                max_value=100,
+                format="%d%%",
+            )
+        },
+    )
 
 
 def _render_student_card(st, qdf, session, students):
@@ -604,6 +830,13 @@ def _render_student_card(st, qdf, session, students):
         student_ids,
         format_func=lambda value: labels[value],
         key=f"workbook_student_card_{int(session['id'])}",
+    )
+    student = students[students["id"] == eid].iloc[0]
+
+    st.markdown(f"### 👤 {student['nom']} {student['prenom']}")
+    st.caption(
+        f"N° {_clean(student.get('numero_etudiant')) or '—'} • "
+        f"Groupe : {_clean(student.get('groupe')) or '—'}"
     )
 
     pres = qdf(
@@ -672,19 +905,43 @@ def _render_student_card(st, qdf, session, students):
     if evals.empty:
         st.info("Aucune évaluation.")
     else:
-        st.dataframe(evals.head(8), hide_index=True, use_container_width=True)
+        display_evals = evals.head(8).copy()
+        display_evals["note_sur_20"] = (
+            display_evals["note"].astype(float)
+            / display_evals["bareme"].astype(float)
+            * 20.0
+        ).round(2)
+        st.dataframe(
+            display_evals[
+                ["date_eval", "activite", "intitule", "note", "bareme", "note_sur_20", "commentaire"]
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
 
     st.markdown("#### Compétences")
     if acq.empty:
         st.info("Aucune compétence.")
     else:
-        st.dataframe(acq, hide_index=True, use_container_width=True)
+        display_acq = acq.copy()
+        display_acq["Niveau"] = display_acq["niveau"].map(_competence_display)
+        st.dataframe(
+            display_acq[["activite", "code", "libelle", "Niveau"]],
+            hide_index=True,
+            use_container_width=True,
+        )
 
     st.markdown("#### Présences récentes")
     if pres.empty:
         st.info("Aucune présence.")
     else:
-        st.dataframe(pres.head(10), hide_index=True, use_container_width=True)
+        display_pres = pres.head(10).copy()
+        display_pres["Présence"] = display_pres["statut"].map(_attendance_display)
+        st.dataframe(
+            display_pres[["date_seance", "activite", "theme", "Présence"]],
+            hide_index=True,
+            use_container_width=True,
+        )
 
 
 def render_teacher_workbook(
@@ -705,9 +962,20 @@ def render_teacher_workbook(
         <style>
         div[data-testid="stDataFrame"] {border-radius:14px; overflow:hidden;}
         div[data-testid="stDataEditor"] {border-radius:14px; overflow:hidden;}
+        [data-testid="stMetric"] {
+          border:1px solid rgba(12,60,120,.10);
+          border-radius:14px;
+          padding:10px;
+          background:rgba(255,255,255,.68);
+        }
         @media (max-width: 768px){
           div[data-testid="stDataEditor"] {font-size:.92rem;}
-          [data-testid="stMetricValue"] {font-size:1.35rem;}
+          [data-testid="stMetricValue"] {font-size:1.25rem;}
+          .stButton button {
+            min-height:52px;
+            font-weight:700;
+            border-radius:14px;
+          }
         }
         </style>
         """,
