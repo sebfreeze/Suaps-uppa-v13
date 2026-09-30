@@ -2,12 +2,16 @@ from teacher_workbook import (
     WORKBOOK_MENU_LABEL,
     _advance_index,
     _attendance_display,
+    _attendance_score_6,
     _competence_display,
+    _competence_score_7,
     _express_presence_comment,
     _gradebook_assessments,
     _note_changed,
     _normalized_note_20,
     _presence_comment_for_save,
+    _rubric_total_20,
+    _score_from_20,
     _weighted_average_20,
     inject_workbook_navigation,
 )
@@ -153,3 +157,27 @@ def test_gradebook_assessments_deduplicates_student_rows():
     assert result[0]["bareme"] == 20
     assert result[0]["coefficient"] == 2
     assert result[1]["identity"] == ("2026-09-10", "Technique")
+
+
+
+def test_suaps_rubric_is_7_7_6():
+    assert _score_from_20(20, 7) == 7
+    assert _score_from_20(10, 7) == 3.5
+    assert _rubric_total_20([7, 7, 6]) == 20
+    assert _rubric_total_20([7, None, 6]) is None
+
+
+def test_competence_score_7_uses_four_progressive_levels():
+    value = _competence_score_7(
+        ["Non évalué", "En cours d’acquisition", "Acquis", "Maîtrisé"]
+    )
+    assert round(value, 2) == 3.5
+    assert _competence_score_7([]) is None
+
+
+def test_attendance_score_6_ignores_justified_and_exempt():
+    value = _attendance_score_6(
+        ["Présent", "Présent", "Absent", "Justifié", "Dispensé"]
+    )
+    assert value == 4.0
+    assert _attendance_score_6(["Justifié", "Dispensé"]) is None

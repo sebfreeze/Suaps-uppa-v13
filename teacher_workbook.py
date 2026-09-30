@@ -33,6 +33,13 @@ COMPETENCE_ICONS = {
     "Maîtrisé": "🔵",
 }
 
+SUAPS_RUBRIC_COMPONENTS = (
+    ("SUAPS • Projet / performance", "Projet / performance", 7.0),
+    ("SUAPS • Maîtrise / compétences", "Maîtrise / compétences", 7.0),
+    ("SUAPS • Assiduité / investissement / engagement", "Assiduité / investissement / engagement", 6.0),
+)
+SUAPS_RUBRIC_TITLES = {title for title, _, _ in SUAPS_RUBRIC_COMPONENTS}
+
 
 def _attendance_display(status):
     status = _clean(status) or "Non renseigné"
@@ -92,6 +99,56 @@ def _note_changed(old_note, new_note):
     if old_note is None or new_note is None:
         return old_note != new_note
     return abs(old_note - new_note) > 1e-9
+
+
+def _clamp_score(value, maximum):
+    value = _float_or_none(value)
+    if value is None:
+        return None
+    return max(0.0, min(float(maximum), value))
+
+
+def _score_from_20(value, maximum):
+    value = _float_or_none(value)
+    if value is None:
+        return None
+    return round(_clamp_score(value / 20.0 * float(maximum), maximum), 2)
+
+
+def _competence_score_7(levels):
+    weights = {
+        "Non évalué": 0.0,
+        "En cours d’acquisition": 1.0 / 3.0,
+        "Acquis": 2.0 / 3.0,
+        "Maîtrisé": 1.0,
+    }
+    values = [weights.get(_clean(level), 0.0) for level in levels]
+    if not values:
+        return None
+    return round(sum(values) / len(values) * 7.0, 2)
+
+
+def _attendance_score_6(statuses):
+    relevant = [
+        _clean(status)
+        for status in statuses
+        if _clean(status) in {"Présent", "Absent"}
+    ]
+    if not relevant:
+        return None
+    present = sum(status == "Présent" for status in relevant)
+    return round(present / len(relevant) * 6.0, 2)
+
+
+def _rubric_total_20(values):
+    cleaned = [_float_or_none(value) for value in values]
+    if any(value is None for value in cleaned):
+        return None
+    return round(sum(cleaned), 2)
+
+
+def _is_suaps_rubric_title(title):
+    return _clean(title) in SUAPS_RUBRIC_TITLES
 
 
 def _evaluation_identity(row):
@@ -493,6 +550,238 @@ def _render_attendance(st, qdf, upsert_presence, session, students):
             st.rerun()
 
 
+def _render_suaps_rubric(st, qdf, exec_sql, session, students):
+    sid = int(session["id"])
+    activity = _clean(session.get("activite"))
+    student_ids = [int(x) for x in students["id"].tolist()]
+    student_id_set = set(student_ids)
+
+    st.markdown("### 🎯 Barème SUAPS commun /20")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Projet / performance", "7 pts")
+    c2.metric("Maîtrise / compétences", "7 pts")
+    c3.metric("Assiduité / investissement / engagement", "6 pts")
+    st.caption(
+        "Même structure pour toutes les activités. Les valeurs proposées sont "
+        "préremplies automatiquement et restent modifiables par l’enseignant."
+    )
+
+    evaluations = qdf(
+        "SELECT * FROM evaluations WHERE activite=? ORDER BY id DESC",
+        (activity,),
+    )
+    saved = {}
+    ordinary_items = {eid: [] for eid in student_ids}
+    seen = set()
+    if not evaluations.empty:
+        for _, row in evaluations.iterrows():
+            eid = int(row["etudiant_id"])
+            if eid not in student_id_set:
+                continue
+            title = _clean(row.get("intitule"))
+            if title in SUAPS_RUBRIC_TITLES:
+                if (eid, title) not in saved:
+                    saved[(eid, title)] = row
+                continue
+            identity = (eid, _evaluation_identity(row))
+            if identity not in seen:
+                seen.add(identity)
+                ordinary_items[eid].append(
+                    (row.get("note"), row.get("bareme"), row.get("coefficient"))
+                )
+
+    performances = qdf(
+        """
+        SELECT id, etudiant_id, note_calculee
+        FROM performances
+        WHERE activite=?
+        ORDER BY date_perf DESC, id DESC
+        """,
+        (activity,),
+    )
+    latest_perf = {}
+    if not performances.empty:
+        for _, row in performances.iterrows():
+            eid = int(row["etudiant_id"])
+            note20 = _float_or_none(row.get("note_calculee"))
+            if eid in student_id_set and eid not in latest_perf and note20 is not None:
+                latest_perf[eid] = note20
+
+    comps = qdf(
+        "SELECT id FROM competences WHERE activite=? ORDER BY id",
+        (activity,),
+    )
+    comp_ids = [int(x) for x in comps["id"].tolist()] if not comps.empty else []
+    acquisitions = qdf(
+        """
+        SELECT a.etudiant_id, a.competence_id, a.niveau
+        FROM acquisitions a
+        JOIN competences c ON c.id=a.competence_id
+        WHERE c.activite=?
+        """,
+        (activity,),
+    )
+    acq_map = {}
+    if not acquisitions.empty:
+        for _, row in acquisitions.iterrows():
+            acq_map[(int(row["etudiant_id"]), int(row["competence_id"]))] = _clean(
+                row.get("niveau")
+            )
+
+    presences = qdf(
+        """
+        SELECT p.etudiant_id, p.statut
+        FROM presences p
+        JOIN seances s ON s.id=p.seance_id
+        WHERE s.activite=?
+        """,
+        (activity,),
+    )
+    statuses = {eid: [] for eid in student_ids}
+    if not presences.empty:
+        for _, row in presences.iterrows():
+            eid = int(row["etudiant_id"])
+            if eid in student_id_set:
+                statuses[eid].append(_clean(row.get("statut")))
+
+    rows = []
+    for _, student in students.iterrows():
+        eid = int(student["id"])
+        levels = [acq_map.get((eid, cid), "Non évalué") for cid in comp_ids]
+
+        perf_default = _score_from_20(latest_perf.get(eid), 7.0)
+        if perf_default is None:
+            perf_default = _score_from_20(
+                _weighted_average_20(ordinary_items[eid]),
+                7.0,
+            )
+        comp_default = _competence_score_7(levels)
+        engage_default = _attendance_score_6(statuses[eid])
+
+        defaults = (perf_default, comp_default, engage_default)
+        scores = []
+        for (title, _, maximum), default in zip(SUAPS_RUBRIC_COMPONENTS, defaults):
+            old = saved.get((eid, title))
+            scores.append(
+                _clamp_score(old.get("note"), maximum)
+                if old is not None
+                else default
+            )
+
+        rows.append(
+            {
+                "etudiant_id": eid,
+                "Étudiant": f"{student['nom']} {student['prenom']}",
+                "Projet / performance /7": scores[0],
+                "Maîtrise / compétences /7": scores[1],
+                "Assiduité / investissement / engagement /6": scores[2],
+                "Total /20": _rubric_total_20(scores),
+            }
+        )
+
+    frame = pd.DataFrame(rows)
+    totals = pd.to_numeric(frame["Total /20"], errors="coerce").dropna()
+    if len(totals):
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Moyenne groupe", f"{totals.mean():.2f}/20")
+        m2.metric("Plus basse", f"{totals.min():.2f}/20")
+        m3.metric("Plus haute", f"{totals.max():.2f}/20")
+
+    with st.form(f"suaps_rubric_form_{sid}_{activity}"):
+        edited = st.data_editor(
+            frame,
+            hide_index=True,
+            use_container_width=True,
+            height=min(780, 42 + 36 * max(1, len(frame))),
+            disabled=["etudiant_id", "Étudiant", "Total /20"],
+            column_config={
+                "etudiant_id": None,
+                "Étudiant": st.column_config.TextColumn(
+                    "Étudiant", width="medium", pinned=True
+                ),
+                "Projet / performance /7": st.column_config.NumberColumn(
+                    "Projet / performance /7",
+                    min_value=0.0, max_value=7.0, step=0.25, format="%.2f",
+                ),
+                "Maîtrise / compétences /7": st.column_config.NumberColumn(
+                    "Maîtrise / compétences /7",
+                    min_value=0.0, max_value=7.0, step=0.25, format="%.2f",
+                ),
+                "Assiduité / investissement / engagement /6": st.column_config.NumberColumn(
+                    "Assiduité / investissement / engagement /6",
+                    min_value=0.0, max_value=6.0, step=0.25, format="%.2f",
+                ),
+                "Total /20": st.column_config.NumberColumn(
+                    "Total /20", min_value=0.0, max_value=20.0, format="%.2f",
+                ),
+            },
+            key=f"suaps_rubric_grid_{sid}_{activity}",
+        )
+        save = st.form_submit_button(
+            "💾 Enregistrer le barème SUAPS 7 + 7 + 6",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if save:
+        columns = (
+            "Projet / performance /7",
+            "Maîtrise / compétences /7",
+            "Assiduité / investissement / engagement /6",
+        )
+        changes = 0
+        today = str(_date.today())
+        for _, row in edited.iterrows():
+            eid = int(row["etudiant_id"])
+            for column, (title, _, maximum) in zip(columns, SUAPS_RUBRIC_COMPONENTS):
+                value = _clamp_score(row[column], maximum)
+                if value is None:
+                    continue
+                old = saved.get((eid, title))
+                old_value = _float_or_none(old.get("note")) if old is not None else None
+                if not _note_changed(old_value, value):
+                    continue
+                if old is not None:
+                    exec_sql(
+                        """
+                        UPDATE evaluations
+                        SET note=?, bareme=?, coefficient=?, date_eval=?, commentaire=?
+                        WHERE id=?
+                        """,
+                        (
+                            value, maximum, 1.0, today,
+                            "Barème SUAPS commun 7/7/6",
+                            int(old["id"]),
+                        ),
+                    )
+                else:
+                    exec_sql(
+                        """
+                        INSERT INTO evaluations(
+                            etudiant_id, activite, intitule, date_eval,
+                            note, bareme, coefficient, commentaire
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            eid, activity, title, today,
+                            value, maximum, 1.0,
+                            "Barème SUAPS commun 7/7/6",
+                        ),
+                    )
+                changes += 1
+        st.success(f"{changes} composante(s) du barème mise(s) à jour.")
+        st.rerun()
+
+    with st.expander("ℹ️ Suggestions automatiques"):
+        st.markdown(
+            """
+- **Projet / performance /7** : dernière performance /20 convertie sur 7 ; à défaut, moyenne des évaluations convertie sur 7.
+- **Maîtrise / compétences /7** : progression des niveaux Non évalué → En cours → Acquis → Maîtrisé.
+- **Assiduité / investissement / engagement /6** : suggestion issue des présences ; les absences justifiées et dispenses sont neutres. L’enseignant ajuste la note pour l’investissement et l’engagement.
+            """
+        )
+
+
 def _render_gradebook_class(st, qdf, exec_sql, session, students):
     sid = int(session["id"])
     activity = _clean(session.get("activite"))
@@ -505,10 +794,14 @@ def _render_gradebook_class(st, qdf, exec_sql, session, students):
         """,
         (activity,),
     )
+    if not evaluations.empty:
+        evaluations = evaluations[
+            ~evaluations["intitule"].astype(str).isin(SUAPS_RUBRIC_TITLES)
+        ].copy()
     if evaluations.empty:
         st.info(
-            "Aucune évaluation pour cette activité. "
-            "Crée la première dans l’onglet « Saisie évaluation »."
+            "Aucune évaluation classique pour cette activité. "
+            "Le barème SUAPS 7/7/6 reste disponible dans son onglet."
         )
         return
 
@@ -983,9 +1276,11 @@ def _render_single_evaluation(st, qdf, exec_sql, session, students):
 
 
 def _render_notes(st, qdf, exec_sql, session, students):
-    tab_class, tab_single = st.tabs(
-        ["📊 Vue classe", "✍️ Saisie évaluation"]
+    tab_rubric, tab_class, tab_single = st.tabs(
+        ["🎯 Barème SUAPS 7/7/6", "📊 Vue classe", "✍️ Saisie évaluation"]
     )
+    with tab_rubric:
+        _render_suaps_rubric(st, qdf, exec_sql, session, students)
     with tab_class:
         _render_gradebook_class(st, qdf, exec_sql, session, students)
     with tab_single:
@@ -1290,8 +1585,23 @@ def _render_student_card(st, qdf, session, students):
         attendance_rate = round(float(pres["statut"].eq("Présent").mean()) * 100)
 
     weighted_average = None
+    suaps_total = None
     if not evals.empty:
-        valid = evals.dropna(subset=["note", "bareme", "coefficient"]).copy()
+        session_activity = _clean(session.get("activite"))
+        rubric_values = []
+        for title, _, _ in SUAPS_RUBRIC_COMPONENTS:
+            rows = evals[
+                (evals["activite"].astype(str) == session_activity)
+                & (evals["intitule"].astype(str) == title)
+            ]
+            rubric_values.append(
+                _float_or_none(rows.iloc[0]["note"]) if not rows.empty else None
+            )
+        suaps_total = _rubric_total_20(rubric_values)
+
+        valid = evals[
+            ~evals["intitule"].astype(str).isin(SUAPS_RUBRIC_TITLES)
+        ].dropna(subset=["note", "bareme", "coefficient"]).copy()
         valid = valid[valid["bareme"].astype(float) > 0]
         if not valid.empty and float(valid["coefficient"].astype(float).sum()) > 0:
             normalized = (
@@ -1313,7 +1623,12 @@ def _render_student_card(st, qdf, session, students):
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Présence", f"{attendance_rate}%" if attendance_rate is not None else "—")
-    c2.metric("Moyenne /20", f"{weighted_average:.2f}" if weighted_average is not None else "—")
+    c2.metric(
+        "Note SUAPS /20" if suaps_total is not None else "Moyenne /20",
+        f"{suaps_total:.2f}"
+        if suaps_total is not None
+        else (f"{weighted_average:.2f}" if weighted_average is not None else "—"),
+    )
     c3.metric("Compétences validées", f"{competence_rate}%" if competence_rate is not None else "—")
 
     st.markdown("#### Dernières évaluations")
