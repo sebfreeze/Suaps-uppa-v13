@@ -31,7 +31,15 @@ def secret_value(name, default=""):
     return default
 
 DATABASE_URL = secret_value("DATABASE_URL", "").strip()
+DATABASE_SCHEMA = secret_value("DATABASE_SCHEMA", "").strip()
 USE_POSTGRES = bool(DATABASE_URL)
+
+def _validated_database_schema():
+    if not DATABASE_SCHEMA:
+        return ""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", DATABASE_SCHEMA):
+        raise RuntimeError("DATABASE_SCHEMA invalide.")
+    return DATABASE_SCHEMA
 
 def sql_compat(sql):
     if not USE_POSTGRES:
@@ -87,6 +95,10 @@ def get_conn():
         if psycopg is None:
             raise RuntimeError("Le paquet psycopg n'est pas installé.")
         raw = psycopg.connect(DATABASE_URL, autocommit=False)
+        schema = _validated_database_schema()
+        if schema:
+            with raw.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}", public')
         return CompatConnection(raw, is_pg=True)
     raw = sqlite3.connect(DB, check_same_thread=False)
     raw.execute("PRAGMA foreign_keys = ON")
@@ -966,7 +978,7 @@ if menu == "Accueil":
 
     st.markdown("### 6 familles d’activités, une multitude de pratiques")
     cols = st.columns(6)
-        cards = [
+    cards = [
             ("🏊", "Activités aquatiques", "Nager • Sauver • Performer"),
             ("🏉", "Activités collectives et duelles", "Coopérer • S’opposer • Jouer"),
             ("🌿", "Activités physiques de pleine nature", "Explorer • Glisser • S’orienter"),
