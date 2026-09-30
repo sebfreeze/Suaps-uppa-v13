@@ -1585,8 +1585,23 @@ def _render_student_card(st, qdf, session, students):
         attendance_rate = round(float(pres["statut"].eq("Présent").mean()) * 100)
 
     weighted_average = None
+    suaps_total = None
     if not evals.empty:
-        valid = evals.dropna(subset=["note", "bareme", "coefficient"]).copy()
+        session_activity = _clean(session.get("activite"))
+        rubric_values = []
+        for title, _, _ in SUAPS_RUBRIC_COMPONENTS:
+            rows = evals[
+                (evals["activite"].astype(str) == session_activity)
+                & (evals["intitule"].astype(str) == title)
+            ]
+            rubric_values.append(
+                _float_or_none(rows.iloc[0]["note"]) if not rows.empty else None
+            )
+        suaps_total = _rubric_total_20(rubric_values)
+
+        valid = evals[
+            ~evals["intitule"].astype(str).isin(SUAPS_RUBRIC_TITLES)
+        ].dropna(subset=["note", "bareme", "coefficient"]).copy()
         valid = valid[valid["bareme"].astype(float) > 0]
         if not valid.empty and float(valid["coefficient"].astype(float).sum()) > 0:
             normalized = (
@@ -1608,7 +1623,12 @@ def _render_student_card(st, qdf, session, students):
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Présence", f"{attendance_rate}%" if attendance_rate is not None else "—")
-    c2.metric("Moyenne /20", f"{weighted_average:.2f}" if weighted_average is not None else "—")
+    c2.metric(
+        "Note SUAPS /20" if suaps_total is not None else "Moyenne /20",
+        f"{suaps_total:.2f}"
+        if suaps_total is not None
+        else (f"{weighted_average:.2f}" if weighted_average is not None else "—"),
+    )
     c3.metric("Compétences validées", f"{competence_rate}%" if competence_rate is not None else "—")
 
     st.markdown("#### Dernières évaluations")
