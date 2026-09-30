@@ -4,7 +4,11 @@ from teacher_workbook import (
     _attendance_display,
     _competence_display,
     _express_presence_comment,
+    _gradebook_assessments,
+    _note_changed,
+    _normalized_note_20,
     _presence_comment_for_save,
+    _weighted_average_20,
     inject_workbook_navigation,
 )
 
@@ -85,3 +89,67 @@ def test_express_presence_comment_marks_manual_change():
         _express_presence_comment(old, "Absent", "")
         == "Appel express — Carnet enseignant"
     )
+
+
+
+def test_normalized_note_20():
+    assert _normalized_note_20(10, 20) == 10
+    assert _normalized_note_20(5, 10) == 10
+    assert _normalized_note_20(None, 20) is None
+    assert _normalized_note_20(10, 0) is None
+
+
+def test_weighted_average_normalizes_mixed_baremes():
+    value = _weighted_average_20(
+        [
+            (10, 20, 1),
+            (8, 10, 2),
+        ]
+    )
+    assert round(value, 2) == 14.0
+
+
+def test_note_changed_handles_blank_and_numeric_values():
+    assert _note_changed(None, 12)
+    assert _note_changed(12, None)
+    assert not _note_changed(12, 12.0)
+    assert _note_changed(12, 12.25)
+
+
+def test_gradebook_assessments_deduplicates_student_rows():
+    import pandas as pd
+
+    evaluations = pd.DataFrame(
+        [
+            {
+                "id": 4,
+                "etudiant_id": 2,
+                "date_eval": "2026-09-25",
+                "intitule": "100 m",
+                "bareme": 20,
+                "coefficient": 2,
+            },
+            {
+                "id": 3,
+                "etudiant_id": 1,
+                "date_eval": "2026-09-25",
+                "intitule": "100 m",
+                "bareme": 20,
+                "coefficient": 2,
+            },
+            {
+                "id": 2,
+                "etudiant_id": 1,
+                "date_eval": "2026-09-10",
+                "intitule": "Technique",
+                "bareme": 10,
+                "coefficient": 1,
+            },
+        ]
+    )
+    result = _gradebook_assessments(evaluations)
+    assert len(result) == 2
+    assert result[0]["identity"] == ("2026-09-25", "100 m")
+    assert result[0]["bareme"] == 20
+    assert result[0]["coefficient"] == 2
+    assert result[1]["identity"] == ("2026-09-10", "Technique")
