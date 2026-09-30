@@ -12,6 +12,7 @@ on:
     paths:
       - 'app.py'
       - 'teacher_workbook.py'
+      - 'v14_complete.py'
       - 'tests/test_teacher_workbook.py'
       - '.github/workflows/test-teacher-workbook.yml'
 
