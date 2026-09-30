@@ -794,10 +794,14 @@ def _render_gradebook_class(st, qdf, exec_sql, session, students):
         """,
         (activity,),
     )
+    if not evaluations.empty:
+        evaluations = evaluations[
+            ~evaluations["intitule"].astype(str).isin(SUAPS_RUBRIC_TITLES)
+        ].copy()
     if evaluations.empty:
         st.info(
-            "Aucune évaluation pour cette activité. "
-            "Crée la première dans l’onglet « Saisie évaluation »."
+            "Aucune évaluation classique pour cette activité. "
+            "Le barème SUAPS 7/7/6 reste disponible dans son onglet."
         )
         return
 
@@ -1272,9 +1276,11 @@ def _render_single_evaluation(st, qdf, exec_sql, session, students):
 
 
 def _render_notes(st, qdf, exec_sql, session, students):
-    tab_class, tab_single = st.tabs(
-        ["📊 Vue classe", "✍️ Saisie évaluation"]
+    tab_rubric, tab_class, tab_single = st.tabs(
+        ["🎯 Barème SUAPS 7/7/6", "📊 Vue classe", "✍️ Saisie évaluation"]
     )
+    with tab_rubric:
+        _render_suaps_rubric(st, qdf, exec_sql, session, students)
     with tab_class:
         _render_gradebook_class(st, qdf, exec_sql, session, students)
     with tab_single:
