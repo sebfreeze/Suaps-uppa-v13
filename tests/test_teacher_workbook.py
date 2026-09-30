@@ -15,7 +15,7 @@ def test_workbook_added_to_teacher_navigation():
     ]
     result = inject_workbook_navigation(nav)
     assert WORKBOOK_MENU_LABEL in result
-    assert result.index(WORKBOOK_MENU_LABEL) == result.index("Présences")
+    assert result.index(WORKBOOK_MENU_LABEL) + 1 == result.index("Présences")
 
 
 def test_workbook_not_added_to_student_navigation():
