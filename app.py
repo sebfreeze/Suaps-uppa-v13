@@ -10,6 +10,12 @@ from presence_note_service import (
     save_rows,
 )
 
+from teacher_workbook import (
+    WORKBOOK_MENU_LABEL,
+    inject_workbook_navigation,
+    render_teacher_workbook,
+)
+
 
 COMPETITION_MENU_LABEL = "Compétition"
 
@@ -45,6 +51,7 @@ def _inject_competition_navigation(options):
 def _sidebar_radio_with_additions(label, options, *args, **kwargs):
     if label == "Navigation":
         options = inject_combined_navigation(options)
+        options = inject_workbook_navigation(options)
         options = _inject_competition_navigation(options)
     return _original_sidebar_radio(label, options, *args, **kwargs)
 
@@ -310,7 +317,18 @@ def _render_presence_note_evaluation():
         st.rerun()
 
 
-if globals().get("menu") == COMPETITION_MENU_LABEL:
+if globals().get("menu") == WORKBOOK_MENU_LABEL:
+    if st.session_state.get("role") == "Enseignant":
+        render_teacher_workbook(
+            st,
+            qdf,
+            exec_sql,
+            upsert_presence,
+            upsert_acquisition,
+        )
+    else:
+        st.error("Cette page est réservée aux enseignants.")
+elif globals().get("menu") == COMPETITION_MENU_LABEL:
     if st.session_state.get("role") == "Enseignant":
         _render_competition()
     else:

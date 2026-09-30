@@ -1,0 +1,30 @@
+name: Test carnet enseignant
+
+on:
+  push:
+    paths:
+      - 'app.py'
+      - 'teacher_workbook.py'
+      - 'tests/test_teacher_workbook.py'
+      - '.github/workflows/test-teacher-workbook.yml'
+  pull_request:
+    paths:
+      - 'app.py'
+      - 'teacher_workbook.py'
+      - 'tests/test_teacher_workbook.py'
+      - '.github/workflows/test-teacher-workbook.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Installer les dépendances
+        run: python -m pip install -r requirements-dev.txt
+      - name: Vérifier la syntaxe
+        run: python -m py_compile app.py teacher_workbook.py presence_note_service.py
+      - name: Tester le carnet enseignant
+        run: python -m pytest tests/test_teacher_workbook.py tests/test_presence_note_service.py -v
