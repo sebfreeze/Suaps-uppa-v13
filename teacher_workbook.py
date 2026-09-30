@@ -33,6 +33,13 @@ COMPETENCE_ICONS = {
     "Maîtrisé": "🔵",
 }
 
+SUAPS_RUBRIC_COMPONENTS = (
+    ("SUAPS • Projet / performance", "Projet / performance", 7.0),
+    ("SUAPS • Maîtrise / compétences", "Maîtrise / compétences", 7.0),
+    ("SUAPS • Assiduité / investissement / engagement", "Assiduité / investissement / engagement", 6.0),
+)
+SUAPS_RUBRIC_TITLES = {title for title, _, _ in SUAPS_RUBRIC_COMPONENTS}
+
 
 def _attendance_display(status):
     status = _clean(status) or "Non renseigné"
@@ -92,6 +99,56 @@ def _note_changed(old_note, new_note):
     if old_note is None or new_note is None:
         return old_note != new_note
     return abs(old_note - new_note) > 1e-9
+
+
+def _clamp_score(value, maximum):
+    value = _float_or_none(value)
+    if value is None:
+        return None
+    return max(0.0, min(float(maximum), value))
+
+
+def _score_from_20(value, maximum):
+    value = _float_or_none(value)
+    if value is None:
+        return None
+    return round(_clamp_score(value / 20.0 * float(maximum), maximum), 2)
+
+
+def _competence_score_7(levels):
+    weights = {
+        "Non évalué": 0.0,
+        "En cours d’acquisition": 1.0 / 3.0,
+        "Acquis": 2.0 / 3.0,
+        "Maîtrisé": 1.0,
+    }
+    values = [weights.get(_clean(level), 0.0) for level in levels]
+    if not values:
+        return None
+    return round(sum(values) / len(values) * 7.0, 2)
+
+
+def _attendance_score_6(statuses):
+    relevant = [
+        _clean(status)
+        for status in statuses
+        if _clean(status) in {"Présent", "Absent"}
+    ]
+    if not relevant:
+        return None
+    present = sum(status == "Présent" for status in relevant)
+    return round(present / len(relevant) * 6.0, 2)
+
+
+def _rubric_total_20(values):
+    cleaned = [_float_or_none(value) for value in values]
+    if any(value is None for value in cleaned):
+        return None
+    return round(sum(cleaned), 2)
+
+
+def _is_suaps_rubric_title(title):
+    return _clean(title) in SUAPS_RUBRIC_TITLES
 
 
 def _evaluation_identity(row):
