@@ -1000,6 +1000,347 @@ def _express_presence_comment(old_row, new_status, observation):
     return "Appel express — Carnet enseignant"
 
 
+
+def _matching_offers_for_session(qdf, session):
+    """Créneaux d'inscription correspondant à la séance affichée dans le carnet."""
+    activity = _clean(session.get("activite"))
+    group = _clean(session.get("groupe"))
+    if not activity:
+        return pd.DataFrame()
+
+    if group:
+        return qdf(
+            """
+            SELECT id, activite, intitule, groupe, jour_horaire, lieu, capacite, ouverte
+            FROM offres_inscription
+            WHERE lower(activite)=lower(?)
+              AND (
+                  lower(coalesce(groupe,''))=lower(?)
+                  OR lower(intitule)=lower(?)
+              )
+            ORDER BY ouverte DESC, id DESC
+            """,
+            (activity, group, group),
+        )
+
+    return qdf(
+        """
+        SELECT id, activite, intitule, groupe, jour_horaire, lieu, capacite, ouverte
+        FROM offres_inscription
+        WHERE lower(activite)=lower(?)
+        ORDER BY ouverte DESC, id DESC
+        """,
+        (activity,),
+    )
+
+
+def _ensure_offer_for_session(qdf, exec_sql, session):
+    """Retourne un créneau lié à la séance, ou crée un créneau interne fermé."""
+    offers = _matching_offers_for_session(qdf, session)
+    if not offers.empty:
+        return int(offers.iloc[0]["id"])
+
+    activity = _clean(session.get("activite")) or "Activité"
+    group = _clean(session.get("groupe"))
+    title = group or f"{activity} — Carnet"
+    exec_sql(
+        """
+        INSERT INTO offres_inscription(
+            activite,intitule,groupe,jour_horaire,lieu,capacite,
+            ouverte,date_debut,date_fin,token
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            activity,
+            title,
+            group,
+            "",
+            "",
+            0,
+            0,
+            None,
+            None,
+            _secrets.token_urlsafe(20),
+        ),
+    )
+    created = _matching_offers_for_session(qdf, session)
+    if created.empty:
+        return None
+    return int(created.iloc[0]["id"])
+
+
+def _offer_default_modality(qdf, offer_id):
+    if not offer_id:
+        return "Non noté"
+    modes = qdf(
+        """
+        SELECT modalite, COUNT(*) AS n
+        FROM inscriptions
+        WHERE offre_id=? AND statut='Inscrit'
+        GROUP BY modalite
+        ORDER BY n DESC
+        LIMIT 1
+        """,
+        (int(offer_id),),
+    )
+    if modes.empty:
+        return "Non noté"
+    value = _clean(modes.iloc[0]["modalite"])
+    return value if value in {"UET", "UECF", "Non noté"} else "Non noté"
+
+
+def _register_student_in_offer(qdf, exec_sql, offer_id, student_id, modality):
+    """Inscrit l'étudiant dans le créneau en protégeant la capacité définie."""
+    offer = qdf(
+        "SELECT id, capacite FROM offres_inscription WHERE id=?",
+        (int(offer_id),),
+    )
+    if offer.empty:
+        return False, "Créneau introuvable."
+
+    already = qdf(
+        """
+        SELECT id FROM inscriptions
+        WHERE offre_id=? AND etudiant_id=? AND statut='Inscrit'
+        """,
+        (int(offer_id), int(student_id)),
+    )
+    if already.empty:
+        capacity = int(offer.iloc[0]["capacite"] or 0)
+        if capacity > 0:
+            count = qdf(
+                """
+                SELECT COUNT(*) AS n
+                FROM inscriptions
+                WHERE offre_id=? AND statut='Inscrit'
+                """,
+                (int(offer_id),),
+            )
+            enrolled = int(count.iloc[0]["n"] or 0) if not count.empty else 0
+            if enrolled >= capacity:
+                return False, f"Créneau complet ({enrolled}/{capacity})."
+
+    exec_sql(
+        """
+        INSERT INTO inscriptions(
+            offre_id,etudiant_id,modalite,date_inscription,statut,commentaire
+        ) VALUES(?,?,?,?,?,?)
+        ON CONFLICT(offre_id,etudiant_id)
+        DO UPDATE SET
+            modalite=excluded.modalite,
+            date_inscription=excluded.date_inscription,
+            statut='Inscrit',
+            commentaire=excluded.commentaire
+        """,
+        (
+            int(offer_id),
+            int(student_id),
+            modality,
+            _datetime.now().isoformat(timespec="seconds"),
+            "Inscrit",
+            "Ajout manuel — Carnet enseignant",
+        ),
+    )
+    return True, "Étudiant ajouté au créneau."
+
+
+def _render_add_student_to_session(st, qdf, exec_sql, session):
+    """Ajout direct d'un étudiant dans le créneau actuellement sélectionné."""
+    sid = int(session["id"])
+    activity = _clean(session.get("activite")) or "Activité"
+    group = _clean(session.get("groupe"))
+    offers = _matching_offers_for_session(qdf, session)
+
+    with st.expander("➕ Ajouter un étudiant à ce créneau", expanded=False):
+        st.caption(
+            f"Créneau sélectionné : {activity}"
+            + (f" • {group}" if group else "")
+            + ". L'étudiant apparaîtra immédiatement dans le carnet."
+        )
+
+        offer_id = None
+        if offers.empty:
+            st.info(
+                "Aucun créneau d'inscription correspondant : un créneau interne fermé "
+                "sera créé automatiquement lors du premier ajout."
+            )
+        elif len(offers) == 1:
+            offer_id = int(offers.iloc[0]["id"])
+            offer = offers.iloc[0]
+            st.caption(
+                f"Inscription liée à : {offer['intitule']}"
+                + (f" • {offer['jour_horaire']}" if _clean(offer.get("jour_horaire")) else "")
+            )
+        else:
+            offer_labels = {
+                int(row["id"]): (
+                    f"{row['intitule']}"
+                    + (f" • {row['jour_horaire']}" if _clean(row.get("jour_horaire")) else "")
+                )
+                for _, row in offers.iterrows()
+            }
+            offer_id = st.selectbox(
+                "Créneau d'inscription associé",
+                list(offer_labels.keys()),
+                format_func=lambda value: offer_labels[value],
+                key=f"workbook_add_offer_{sid}",
+            )
+
+        current_students = _students_for_session(qdf, session)
+        current_ids = (
+            {int(x) for x in current_students["id"].tolist()}
+            if not current_students.empty
+            else set()
+        )
+        all_students = qdf(
+            """
+            SELECT id, nom, prenom, numero_etudiant, groupe
+            FROM etudiants
+            WHERE actif=1
+            ORDER BY nom, prenom
+            """
+        )
+        available = (
+            all_students[~all_students["id"].astype(int).isin(current_ids)]
+            if not all_students.empty
+            else all_students
+        )
+
+        st.markdown("**Étudiant déjà dans la base**")
+        if available.empty:
+            st.info("Tous les étudiants actifs sont déjà dans ce créneau, ou la base est vide.")
+        else:
+            student_labels = {}
+            for _, student in available.iterrows():
+                eid = int(student["id"])
+                details = []
+                if _clean(student.get("numero_etudiant")):
+                    details.append(f"N° {_clean(student.get('numero_etudiant'))}")
+                if _clean(student.get("groupe")):
+                    details.append(_clean(student.get("groupe")))
+                suffix = f" • {' • '.join(details)}" if details else ""
+                student_labels[eid] = f"{student['nom']} {student['prenom']}{suffix}"
+
+            with st.form(f"workbook_add_existing_student_{sid}"):
+                student_id = st.selectbox(
+                    "Rechercher / sélectionner l'étudiant",
+                    list(student_labels.keys()),
+                    format_func=lambda value: student_labels[value],
+                    key=f"workbook_add_existing_select_{sid}",
+                )
+                add_existing = st.form_submit_button(
+                    "➕ Ajouter au créneau",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if add_existing:
+                target_offer = int(offer_id) if offer_id else _ensure_offer_for_session(
+                    qdf, exec_sql, session
+                )
+                if target_offer is None:
+                    st.error("Impossible de créer le lien avec ce créneau.")
+                else:
+                    modality = _offer_default_modality(qdf, target_offer)
+                    ok, message = _register_student_in_offer(
+                        qdf, exec_sql, target_offer, int(student_id), modality
+                    )
+                    if ok:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+
+        st.markdown("**Nouvel étudiant**")
+        with st.form(f"workbook_create_and_add_student_{sid}"):
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Nom", key=f"workbook_new_name_{sid}")
+            firstname = c2.text_input("Prénom", key=f"workbook_new_firstname_{sid}")
+            c3, c4 = st.columns(2)
+            number = c3.text_input("N° étudiant", key=f"workbook_new_number_{sid}")
+            email = c4.text_input("Email", key=f"workbook_new_email_{sid}")
+            student_group = st.text_input(
+                "Groupe",
+                value=group,
+                key=f"workbook_new_group_{sid}",
+            )
+            create_and_add = st.form_submit_button(
+                "Créer et ajouter au créneau",
+                use_container_width=True,
+            )
+
+        if create_and_add:
+            name = _clean(name)
+            firstname = _clean(firstname)
+            number = _clean(number)
+            email = _clean(email)
+            student_group = _clean(student_group)
+            if not name or not firstname:
+                st.error("Le nom et le prénom sont obligatoires.")
+            else:
+                existing = (
+                    qdf(
+                        "SELECT id FROM etudiants WHERE numero_etudiant=? ORDER BY id LIMIT 1",
+                        (number,),
+                    )
+                    if number
+                    else pd.DataFrame()
+                )
+                if existing.empty:
+                    existing = qdf(
+                        """
+                        SELECT id FROM etudiants
+                        WHERE lower(nom)=lower(?) AND lower(prenom)=lower(?)
+                        ORDER BY id LIMIT 1
+                        """,
+                        (name, firstname),
+                    )
+
+                if existing.empty:
+                    exec_sql(
+                        """
+                        INSERT INTO etudiants(
+                            nom,prenom,email,numero_etudiant,groupe,actif
+                        ) VALUES(?,?,?,?,?,1)
+                        """,
+                        (name, firstname, email, number or None, student_group),
+                    )
+                    existing = (
+                        qdf(
+                            "SELECT id FROM etudiants WHERE numero_etudiant=? ORDER BY id DESC LIMIT 1",
+                            (number,),
+                        )
+                        if number
+                        else qdf(
+                            """
+                            SELECT id FROM etudiants
+                            WHERE lower(nom)=lower(?) AND lower(prenom)=lower(?)
+                            ORDER BY id DESC LIMIT 1
+                            """,
+                            (name, firstname),
+                        )
+                    )
+
+                if existing.empty:
+                    st.error("Impossible de créer l'étudiant.")
+                else:
+                    student_id = int(existing.iloc[0]["id"])
+                    target_offer = int(offer_id) if offer_id else _ensure_offer_for_session(
+                        qdf, exec_sql, session
+                    )
+                    if target_offer is None:
+                        st.error("Impossible de créer le lien avec ce créneau.")
+                    else:
+                        modality = _offer_default_modality(qdf, target_offer)
+                        ok, message = _register_student_in_offer(
+                            qdf, exec_sql, target_offer, student_id, modality
+                        )
+                        if ok:
+                            st.success("Étudiant créé/identifié et ajouté au créneau.")
+                            st.rerun()
+                        else:
+                            st.error(message)
+
 def _render_header(st, session, students):
     activity = _clean(session.get("activite")) or "Activité"
     group = _clean(session.get("groupe")) or "Tous"
@@ -1048,6 +1389,44 @@ def _render_attendance(st, qdf, upsert_presence, session, students):
     if total_students:
         st.progress(min(1.0, completed / total_students))
         st.caption(f"Appel renseigné : {completed}/{total_students} étudiant(s)")
+
+    st.markdown("#### ✅ Présence en 1 clic")
+    st.caption(
+        "Un clic coche l'étudiant présent ; un second clic le repasse absent. "
+        "Les statuts Justifié et Dispensé restent disponibles dans la grille complète."
+    )
+
+    def _toggle_quick_presence(student_id, state_key):
+        old = pmap.get(int(student_id))
+        target = "Présent" if st.session_state.get(state_key, False) else "Absent"
+        upsert_presence(
+            sid,
+            int(student_id),
+            target,
+            _presence_comment_for_save(old, target, ""),
+        )
+
+    quick_cols = st.columns(2)
+    for index, (_, student) in enumerate(students.iterrows()):
+        eid = int(student["id"])
+        old = pmap.get(eid)
+        current_status = _clean(old.get("statut")) if old is not None else ""
+        state_key = f"workbook_one_click_present_{sid}_{eid}"
+        expected = current_status == "Présent"
+        if state_key not in st.session_state or st.session_state[state_key] != expected:
+            st.session_state[state_key] = expected
+
+        label = f"{student['nom']} {student['prenom']}"
+        if _clean(student.get("numero_etudiant")):
+            label += f" • {_clean(student.get('numero_etudiant'))}"
+        quick_cols[index % 2].checkbox(
+            label,
+            key=state_key,
+            on_change=_toggle_quick_presence,
+            args=(eid, state_key),
+        )
+
+    st.divider()
 
     b1, b2 = st.columns(2)
     if b1.button(
@@ -2480,9 +2859,14 @@ def render_teacher_workbook(
         key="workbook_session",
     )
     session = filtered[filtered["id"] == sid].iloc[0]
+
+    _render_add_student_to_session(st, qdf, exec_sql, session)
     students = _students_for_session(qdf, session)
     if students.empty:
-        st.warning("Aucun étudiant actif n’est rattaché à cette séance.")
+        st.warning(
+            "Aucun étudiant actif n’est rattaché à cette séance. "
+            "Utilise « Ajouter un étudiant à ce créneau » ci-dessus."
+        )
         return
 
     _render_header(st, session, students)
