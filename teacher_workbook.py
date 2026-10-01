@@ -1325,6 +1325,14 @@ def _render_add_student_to_session(st, qdf, exec_sql, session):
                     st.error("Impossible de créer l'étudiant.")
                 else:
                     student_id = int(existing.iloc[0]["id"])
+                    exec_sql(
+                        """
+                        UPDATE etudiants
+                        SET nom=?, prenom=?, email=?, groupe=?, actif=1
+                        WHERE id=?
+                        """,
+                        (name, firstname, email, student_group, student_id),
+                    )
                     target_offer = int(offer_id) if offer_id else _ensure_offer_for_session(
                         qdf, exec_sql, session
                     )
