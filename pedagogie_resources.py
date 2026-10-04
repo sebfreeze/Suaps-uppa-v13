@@ -477,16 +477,9 @@ def ensure_seance_resource_column(get_conn, use_postgres: bool) -> None:
     conn = get_conn()
     try:
         if use_postgres:
-            row = _fetchone(
-                conn,
-                """
-                SELECT 1 AS present
-                FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='seances' AND column_name='ressource_id'
-                """,
-            )
-            if not row:
-                conn.execute("ALTER TABLE seances ADD COLUMN ressource_id INTEGER")
+            # Idempotent and race-safe: the app may initialize this schema from
+            # multiple Streamlit executions and the table may live outside public.
+            conn.execute("ALTER TABLE seances ADD COLUMN IF NOT EXISTS ressource_id INTEGER")
         else:
             cur = conn.execute("PRAGMA table_info(seances)")
             cols = {r[1] if not hasattr(r, "keys") else r["name"] for r in cur.fetchall()}
