@@ -704,6 +704,168 @@ def _render_workbook_quick_actions(st, qdf, exec_sql):
         )
 
 
+
+def _ensure_session_offer_link_table(exec_sql):
+    """Crée la table de liaison séance ↔ créneau sans modifier les anciennes données."""
+    exec_sql(
+        """
+        CREATE TABLE IF NOT EXISTS seance_offre_links(
+            seance_id INTEGER PRIMARY KEY,
+            offre_id INTEGER NOT NULL
+        )
+        """
+    )
+
+
+def _session_offer_id(qdf, session_id):
+    """Retourne le créneau explicitement lié à une séance, si disponible."""
+    try:
+        linked = qdf(
+            "SELECT offre_id FROM seance_offre_links WHERE seance_id=?",
+            (int(session_id),),
+        )
+    except Exception:
+        return None
+    if linked.empty:
+        return None
+    return int(linked.iloc[0]["offre_id"])
+
+
+def _link_session_to_offer(exec_sql, session_id, offer_id):
+    """Enregistre le rattachement explicite de la séance à son créneau."""
+    exec_sql(
+        """
+        INSERT INTO seance_offre_links(seance_id, offre_id)
+        VALUES(?,?)
+        ON CONFLICT(seance_id)
+        DO UPDATE SET offre_id=excluded.offre_id
+        """,
+        (int(session_id), int(offer_id)),
+    )
+
+
+def _students_for_offer(qdf, offer_id):
+    """Roster exact d'un créneau d'inscription."""
+    return qdf(
+        """
+        SELECT DISTINCT e.id, e.nom, e.prenom, e.numero_etudiant, e.groupe
+        FROM etudiants e
+        JOIN inscriptions i ON i.etudiant_id=e.id
+        WHERE e.actif=1
+          AND i.statut='Inscrit'
+          AND i.offre_id=?
+        ORDER BY e.nom, e.prenom
+        """,
+        (int(offer_id),),
+    )
+
+
+def _render_create_session_from_offer(st, qdf, exec_sql):
+    """Flux principal du carnet : choisir un créneau, puis créer la séance."""
+    st.markdown("### 🗓️ Créer une séance depuis un créneau")
+    st.caption(
+        "Sélectionne d’abord le créneau : la séance sera automatiquement rattachée "
+        "au bon groupe et aux étudiants inscrits."
+    )
+
+    offers = qdf(
+        """
+        SELECT o.id, o.activite, o.intitule, o.groupe, o.jour_horaire, o.lieu,
+               o.capacite, o.ouverte,
+               COUNT(CASE WHEN i.statut='Inscrit' THEN 1 END) AS nb_inscrits
+        FROM offres_inscription o
+        LEFT JOIN inscriptions i ON i.offre_id=o.id
+        GROUP BY o.id, o.activite, o.intitule, o.groupe, o.jour_horaire,
+                 o.lieu, o.capacite, o.ouverte
+        ORDER BY o.activite, o.intitule, o.jour_horaire, o.id
+        """
+    )
+    if offers.empty:
+        st.info("Aucun créneau disponible. Crée d’abord un créneau dans « Accès rapides ».")
+        return
+
+    offer_labels = {}
+    for _, row in offers.iterrows():
+        oid = int(row["id"])
+        details = [str(row["activite"]), str(row["intitule"])]
+        if _clean(row.get("jour_horaire")):
+            details.append(_clean(row.get("jour_horaire")))
+        if _clean(row.get("lieu")):
+            details.append(_clean(row.get("lieu")))
+        details.append(f"{int(row['nb_inscrits'] or 0)} étudiant(s)")
+        offer_labels[oid] = " • ".join(details)
+
+    selected_offer_id = st.selectbox(
+        "Créneau",
+        list(offer_labels.keys()),
+        format_func=lambda value: offer_labels[value],
+        key="workbook_offer_for_session",
+    )
+    offer = offers[offers["id"].astype(int) == int(selected_offer_id)].iloc[0]
+
+    roster = _students_for_offer(qdf, selected_offer_id)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Étudiants", len(roster))
+    c2.metric("Activité", _clean(offer.get("activite")) or "—")
+    c3.metric("Groupe", _clean(offer.get("groupe")) or _clean(offer.get("intitule")) or "—")
+
+    with st.form("workbook_create_session_from_offer"):
+        f1, f2 = st.columns([1, 2])
+        session_date = f1.date_input(
+            "Date de la séance",
+            value=_date.today(),
+            key="workbook_new_session_date",
+        )
+        theme = f2.text_input(
+            "Thème / contenu",
+            placeholder="Ex. Séance 4 — qualité de passe",
+            key="workbook_new_session_theme",
+        )
+        create = st.form_submit_button(
+            "➕ Créer la séance pour ce créneau",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if create:
+        activity = _clean(offer.get("activite")) or "Activité"
+        session_group = _clean(offer.get("groupe")) or _clean(offer.get("intitule"))
+        exec_sql(
+            """
+            INSERT INTO seances(activite,date_seance,groupe,theme)
+            VALUES(?,?,?,?)
+            """,
+            (
+                activity,
+                str(session_date),
+                session_group,
+                _clean(theme),
+            ),
+        )
+        created = qdf(
+            """
+            SELECT id
+            FROM seances
+            WHERE lower(activite)=lower(?)
+              AND date_seance=?
+              AND lower(coalesce(groupe,''))=lower(?)
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (activity, str(session_date), session_group),
+        )
+        if created.empty:
+            st.error("La séance a été créée mais son rattachement au créneau n’a pas pu être finalisé.")
+            return
+        sid = int(created.iloc[0]["id"])
+        _link_session_to_offer(exec_sql, sid, selected_offer_id)
+        st.session_state["workbook_session"] = sid
+        st.success(
+            f"Séance créée et rattachée au créneau • {len(roster)} étudiant(s) seront chargés automatiquement."
+        )
+        st.rerun()
+
+
 def _attendance_display(status):
     status = _clean(status) or "Non renseigné"
     return f"{ATTENDANCE_ICONS.get(status, '⚪')} {status}"
@@ -889,10 +1051,13 @@ def _clean(value):
 def _students_for_session(qdf, session):
     """Retourne le roster de la séance sans mélanger les activités.
 
-    Priorité aux inscriptions en ligne liées à l'activité et, si renseigné,
-    au groupe/intitulé du créneau. Le comportement historique n'est utilisé
-    qu'en absence totale d'inscriptions dans l'application.
+    Priorité absolue au créneau explicitement lié à la séance. Les anciennes
+    séances conservent le comportement historique par activité/groupe.
     """
+    linked_offer_id = _session_offer_id(qdf, int(session["id"]))
+    if linked_offer_id is not None:
+        return _students_for_offer(qdf, linked_offer_id)
+
     activity = _clean(session.get("activite"))
     group = _clean(session.get("groupe"))
 
@@ -1003,6 +1168,17 @@ def _express_presence_comment(old_row, new_status, observation):
 
 def _matching_offers_for_session(qdf, session):
     """Créneaux d'inscription correspondant à la séance affichée dans le carnet."""
+    linked_offer_id = _session_offer_id(qdf, int(session["id"]))
+    if linked_offer_id is not None:
+        return qdf(
+            """
+            SELECT id, activite, intitule, groupe, jour_horaire, lieu, capacite, ouverte
+            FROM offres_inscription
+            WHERE id=?
+            """,
+            (linked_offer_id,),
+        )
+
     activity = _clean(session.get("activite"))
     group = _clean(session.get("groupe"))
     if not activity:
@@ -2797,7 +2973,8 @@ def render_teacher_workbook(
     """Rend le carnet enseignant sans modifier le schéma historique."""
     st.markdown("## 📘 Carnet enseignant")
     st.caption(
-        "Appel, notes et compétences dans une même vue • optimisé smartphone et tablette"
+        "Choisir un créneau → créer la séance → étudiants chargés automatiquement • "
+        "appel, notes et compétences dans une même vue"
     )
 
     st.markdown(
@@ -2825,13 +3002,16 @@ def render_teacher_workbook(
         unsafe_allow_html=True,
     )
 
+    _ensure_session_offer_link_table(exec_sql)
     _render_workbook_quick_actions(st, qdf, exec_sql)
+    _render_create_session_from_offer(st, qdf, exec_sql)
+    st.divider()
 
     sessions = qdf(
         "SELECT * FROM seances ORDER BY date_seance DESC, id DESC"
     )
     if sessions.empty:
-        st.info("Crée d’abord une séance dans le menu Présences.")
+        st.info("Crée une séance depuis le créneau ci-dessus.")
         return
 
     activities = ["Toutes"] + sorted(
