@@ -1,5 +1,7 @@
 # Module Sports collectifs - équipes, matchs, tournois et photos
-SPORTS_CO = ["Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote Basque"]
+import time as _time
+
+SPORTS_CO = ["Natation", "Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote Basque"]
 
 
 def init_sports_co_db(exe):
@@ -19,6 +21,422 @@ def init_sports_co_db(exe):
         except Exception:
             pass
 
+    # Natation : compétition par équipes, chronométrage et temps intermédiaires.
+    exe("""CREATE TABLE IF NOT EXISTS natation_competitions(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nom TEXT NOT NULL,
+        date_competition TEXT,
+        lieu TEXT,
+        nb_lignes INTEGER DEFAULT 5
+    )""")
+    exe("""CREATE TABLE IF NOT EXISTS natation_equipes(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        competition_id INTEGER NOT NULL,
+        nom TEXT NOT NULL,
+        universite TEXT,
+        categorie TEXT NOT NULL,
+        ligne INTEGER,
+        UNIQUE(competition_id,nom,categorie)
+    )""")
+    exe("""CREATE TABLE IF NOT EXISTS natation_epreuves(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        competition_id INTEGER NOT NULL,
+        code TEXT NOT NULL,
+        nom TEXT NOT NULL,
+        bloc TEXT,
+        coefficient REAL DEFAULT 1,
+        nb_splits INTEGER DEFAULT 0,
+        ordre INTEGER DEFAULT 0,
+        UNIQUE(competition_id,code)
+    )""")
+    exe("""CREATE TABLE IF NOT EXISTS natation_resultats(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        competition_id INTEGER NOT NULL,
+        equipe_id INTEGER NOT NULL,
+        epreuve_id INTEGER NOT NULL,
+        temps_final REAL,
+        mode_saisie TEXT,
+        statut TEXT DEFAULT 'Prévu',
+        UNIQUE(competition_id,equipe_id,epreuve_id)
+    )""")
+    exe("""CREATE TABLE IF NOT EXISTS natation_splits(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        resultat_id INTEGER NOT NULL,
+        numero INTEGER NOT NULL,
+        temps_cumule REAL NOT NULL,
+        temps_split REAL,
+        source TEXT,
+        UNIQUE(resultat_id,numero)
+    )""")
+
+
+
+def _swim_seconds(value):
+    """Convertit 1:02.34, 1'02\"34 ou des secondes en float."""
+    text = str(value or "").strip().lower().replace(",", ".")
+    if not text:
+        return None
+    text = text.replace("’", "'").replace("′", "'").replace("″", '"')
+    try:
+        if ":" in text:
+            minutes, seconds = text.split(":", 1)
+            return float(minutes) * 60.0 + float(seconds.replace('"', ""))
+        if "'" in text:
+            minutes, seconds = text.split("'", 1)
+            return float(minutes) * 60.0 + float(seconds.replace('"', ""))
+        return float(text.replace('"', ""))
+    except Exception:
+        return None
+
+
+def _swim_fmt(seconds):
+    if seconds is None:
+        return "—"
+    value = max(0.0, float(seconds))
+    minutes = int(value // 60)
+    sec = value - minutes * 60
+    return f"{minutes}:{sec:05.2f}" if minutes else f"{sec:.2f} s"
+
+
+def _ensure_swim_default_competition(rows, one, exe, date):
+    comp = one("SELECT * FROM natation_competitions ORDER BY id DESC LIMIT 1")
+    if not comp:
+        exe(
+            "INSERT INTO natation_competitions(nom,date_competition,lieu,nb_lignes) VALUES(?,?,?,?)",
+            ("Rencontre Natation Toulouse - UPPA - Bordeaux", str(date.today()), "", 5),
+        )
+        comp = one("SELECT * FROM natation_competitions ORDER BY id DESC LIMIT 1")
+    events = [
+        ("C1", "400 m 4N à 8", "C1", 4.0, 8, 1),
+        ("C2-PAP", "100 m Papillon à 2", "C2", 1.0, 2, 2),
+        ("C2-DOS", "100 m Dos à 2", "C2", 1.0, 2, 3),
+        ("C2-BR", "100 m Brasse à 2", "C2", 1.0, 2, 4),
+        ("C2-NL", "100 m Crawl à 2", "C2", 1.0, 2, 5),
+        ("C3", "8 × 100 m NL", "C3", 6.0, 8, 6),
+        ("BONUS", "12 × 50 m NL mixte", "Bonus", 0.0, 12, 7),
+    ]
+    for code, nom, bloc, coef, splits, ordre in events:
+        exe(
+            """INSERT INTO natation_epreuves(
+                competition_id,code,nom,bloc,coefficient,nb_splits,ordre
+            ) VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(competition_id,code) DO NOTHING""",
+            (comp["id"], code, nom, bloc, coef, splits, ordre),
+        )
+    return one("SELECT * FROM natation_competitions WHERE id=?", (comp["id"],))
+
+
+def _swim_result(rows, one, exe, comp_id, team_id, event_id):
+    result = one(
+        """SELECT * FROM natation_resultats
+           WHERE competition_id=? AND equipe_id=? AND epreuve_id=?""",
+        (comp_id, team_id, event_id),
+    )
+    if result:
+        return result
+    exe(
+        """INSERT INTO natation_resultats(
+            competition_id,equipe_id,epreuve_id,statut
+        ) VALUES(?,?,?,'Prévu')
+        ON CONFLICT(competition_id,equipe_id,epreuve_id) DO NOTHING""",
+        (comp_id, team_id, event_id),
+    )
+    return one(
+        """SELECT * FROM natation_resultats
+           WHERE competition_id=? AND equipe_id=? AND epreuve_id=?""",
+        (comp_id, team_id, event_id),
+    )
+
+
+def _save_swim_split(rows, exe, result_id, cumulative, source):
+    existing = rows(
+        "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+        (result_id,),
+    )
+    numero = len(existing) + 1
+    previous = float(existing[-1]["temps_cumule"]) if existing else 0.0
+    split = max(0.0, float(cumulative) - previous)
+    exe(
+        """INSERT INTO natation_splits(
+            resultat_id,numero,temps_cumule,temps_split,source
+        ) VALUES(?,?,?,?,?)
+        ON CONFLICT(resultat_id,numero)
+        DO UPDATE SET temps_cumule=excluded.temps_cumule,
+                      temps_split=excluded.temps_split,
+                      source=excluded.source""",
+        (result_id, numero, float(cumulative), split, source),
+    )
+
+
+def _render_swim_timer_display(st, start_epoch, running):
+    if not running or not start_epoch:
+        return
+    elapsed = max(0.0, _time.time() - float(start_epoch))
+    # Affichage serveur simple ; les actions enregistrent toujours le temps exact au clic.
+    st.markdown(
+        f"<div style='font-size:2.2rem;font-weight:800;text-align:center;padding:.35rem 0'>"
+        f"⏱️ {_swim_fmt(elapsed)}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_natation_competition(st, rows, one, exe, date):
+    comp = _ensure_swim_default_competition(rows, one, exe, date)
+    st.markdown("### 🏊 Natation • Compétition par équipes")
+    st.caption(
+        "5 lignes d'eau • Masculin / Féminin / Mixte • chronomètre + temps intermédiaires + saisie manuelle"
+    )
+
+    tab = st.radio(
+        "Natation",
+        ["⏱️ Chronométrage", "👥 Équipes", "📊 Résultats"],
+        horizontal=True,
+        key="swim_tab",
+    )
+
+    if tab == "👥 Équipes":
+        with st.form("swim_team_create"):
+            c1, c2 = st.columns(2)
+            universite = c1.selectbox("Université", ["UPPA", "Toulouse", "Bordeaux", "Autre"])
+            categorie = c2.selectbox("Catégorie", ["Masculin", "Féminin", "Mixte"])
+            c3, c4 = st.columns(2)
+            nom = c3.text_input("Nom de l'équipe", placeholder="Ex. UPPA Mixte 1")
+            ligne = c4.number_input("Ligne d'eau", min_value=1, max_value=5, value=1, step=1)
+            add = st.form_submit_button("Créer l'équipe", type="primary", use_container_width=True)
+        if add and nom.strip():
+            exe(
+                """INSERT INTO natation_equipes(
+                    competition_id,nom,universite,categorie,ligne
+                ) VALUES(?,?,?,?,?)
+                ON CONFLICT(competition_id,nom,categorie)
+                DO UPDATE SET universite=excluded.universite,ligne=excluded.ligne""",
+                (comp["id"], nom.strip(), universite, categorie, int(ligne)),
+            )
+            st.success("Équipe enregistrée.")
+            st.rerun()
+        teams = rows(
+            """SELECT * FROM natation_equipes
+               WHERE competition_id=?
+               ORDER BY categorie,ligne,universite,nom""",
+            (comp["id"],),
+        )
+        if teams:
+            st.dataframe(
+                [
+                    {
+                        "Catégorie": t["categorie"],
+                        "Ligne": t["ligne"],
+                        "Université": t["universite"],
+                        "Équipe": t["nom"],
+                    }
+                    for t in teams
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("Crée les équipes avant le chronométrage.")
+        return
+
+    events = rows(
+        """SELECT * FROM natation_epreuves
+           WHERE competition_id=? ORDER BY ordre,id""",
+        (comp["id"],),
+    )
+    teams = rows(
+        """SELECT * FROM natation_equipes
+           WHERE competition_id=? ORDER BY categorie,ligne,nom""",
+        (comp["id"],),
+    )
+
+    if tab == "📊 Résultats":
+        data = []
+        for r in rows(
+            """SELECT nr.*,ne.code,ne.nom epreuve,ne.bloc,ne.coefficient,
+                      e.nom equipe,e.universite,e.categorie,e.ligne
+               FROM natation_resultats nr
+               JOIN natation_epreuves ne ON ne.id=nr.epreuve_id
+               JOIN natation_equipes e ON e.id=nr.equipe_id
+               WHERE nr.competition_id=?
+               ORDER BY e.categorie,ne.ordre,e.ligne,e.nom""",
+            (comp["id"],),
+        ):
+            splits = rows(
+                "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+                (r["id"],),
+            )
+            data.append(
+                {
+                    "Catégorie": r["categorie"],
+                    "Épreuve": r["epreuve"],
+                    "Ligne": r["ligne"],
+                    "Équipe": r["equipe"],
+                    "Temps final": _swim_fmt(r["temps_final"]),
+                    "Intermédiaires": " | ".join(_swim_fmt(s["temps_split"]) for s in splits),
+                    "Mode": r["mode_saisie"] or "",
+                }
+            )
+        if data:
+            st.dataframe(data, use_container_width=True, hide_index=True)
+        else:
+            st.info("Aucun temps enregistré.")
+        return
+
+    if not teams:
+        st.warning("Crée d'abord les équipes dans l'onglet « Équipes ».")
+        return
+
+    c1, c2 = st.columns(2)
+    event = c1.selectbox(
+        "Épreuve",
+        events,
+        format_func=lambda r: f"{r['code']} • {r['nom']}",
+        key="swim_event",
+    )
+    category = c2.selectbox(
+        "Catégorie",
+        ["Masculin", "Féminin", "Mixte"],
+        key="swim_category",
+    )
+    eligible = [t for t in teams if t["categorie"] == category]
+    if not eligible:
+        st.info(f"Aucune équipe {category}.")
+        return
+    team = st.selectbox(
+        "Équipe / ligne",
+        eligible,
+        format_func=lambda r: f"Ligne {r['ligne']} • {r['universite']} • {r['nom']}",
+        key="swim_team",
+    )
+    result = _swim_result(rows, one, exe, comp["id"], team["id"], event["id"])
+    result_id = int(result["id"])
+    key_base = f"swim_timer_{result_id}"
+    start_key = key_base + "_start"
+    running_key = key_base + "_running"
+
+    st.markdown(
+        f"#### Ligne {team['ligne']} • {team['nom']}  
+"
+        f"**{event['nom']}** • {int(event['nb_splits'] or 0)} temps intermédiaire(s) attendus"
+    )
+
+    _render_swim_timer_display(
+        st,
+        st.session_state.get(start_key),
+        st.session_state.get(running_key, False),
+    )
+
+    b1, b2, b3 = st.columns(3)
+    if b1.button("▶️ DÉMARRER", type="primary", use_container_width=True, key=key_base+"_go"):
+        st.session_state[start_key] = _time.time()
+        st.session_state[running_key] = True
+        exe("DELETE FROM natation_splits WHERE resultat_id=?", (result_id,))
+        exe(
+            "UPDATE natation_resultats SET temps_final=NULL,mode_saisie='Chrono',statut='En cours' WHERE id=?",
+            (result_id,),
+        )
+        st.rerun()
+
+    if b2.button("⏱️ INTERMÉDIAIRE", use_container_width=True, key=key_base+"_split"):
+        start = st.session_state.get(start_key)
+        if not st.session_state.get(running_key) or not start:
+            st.warning("Démarre le chrono avant d'enregistrer un intermédiaire.")
+        else:
+            current_splits = rows(
+                "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+                (result_id,),
+            )
+            if len(current_splits) >= int(event["nb_splits"] or 0):
+                st.warning("Tous les temps intermédiaires prévus sont déjà enregistrés.")
+            else:
+                elapsed = _time.time() - float(start)
+                _save_swim_split(rows, exe, result_id, elapsed, "Chrono")
+                st.rerun()
+
+    if b3.button("⏹️ FINAL", use_container_width=True, key=key_base+"_stop"):
+        start = st.session_state.get(start_key)
+        if not st.session_state.get(running_key) or not start:
+            st.warning("Démarre le chrono avant l'arrêt final.")
+        else:
+            elapsed = _time.time() - float(start)
+            exe(
+                """UPDATE natation_resultats
+                   SET temps_final=?,mode_saisie='Chrono',statut='Terminé'
+                   WHERE id=?""",
+                (float(elapsed), result_id),
+            )
+            st.session_state[running_key] = False
+            st.rerun()
+
+    splits = rows(
+        "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+        (result_id,),
+    )
+    if splits:
+        st.markdown("**Temps intermédiaires enregistrés**")
+        st.dataframe(
+            [
+                {
+                    "#": s["numero"],
+                    "Temps du relayeur": _swim_fmt(s["temps_split"]),
+                    "Cumul": _swim_fmt(s["temps_cumule"]),
+                    "Source": s["source"],
+                }
+                for s in splits
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    saved = one("SELECT * FROM natation_resultats WHERE id=?", (result_id,))
+    if saved and saved["temps_final"] is not None:
+        st.success(f"Temps final : {_swim_fmt(saved['temps_final'])}")
+
+    st.divider()
+    st.markdown("#### ✍️ Saisie manuelle")
+    st.caption("Formats acceptés : 62.35 • 1:02.35 • 1'02.35")
+    with st.form(f"swim_manual_{result_id}"):
+        manual = st.text_input("Temps")
+        m1, m2 = st.columns(2)
+        add_split = m1.form_submit_button("Ajouter comme intermédiaire", use_container_width=True)
+        save_final = m2.form_submit_button("Enregistrer comme temps final", type="primary", use_container_width=True)
+    if add_split or save_final:
+        seconds = _swim_seconds(manual)
+        if seconds is None or seconds <= 0:
+            st.error("Temps invalide.")
+        elif add_split:
+            current_splits = rows(
+                "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+                (result_id,),
+            )
+            if len(current_splits) >= int(event["nb_splits"] or 0):
+                st.error("Le nombre d'intermédiaires prévu est déjà atteint.")
+            else:
+                _save_swim_split(rows, exe, result_id, seconds, "Manuel")
+                st.success("Temps intermédiaire ajouté.")
+                st.rerun()
+        else:
+            exe(
+                """UPDATE natation_resultats
+                   SET temps_final=?,mode_saisie='Manuel',statut='Terminé'
+                   WHERE id=?""",
+                (float(seconds), result_id),
+            )
+            st.success("Temps final enregistré.")
+            st.rerun()
+
+    if st.button("🗑️ Réinitialiser ce chrono", use_container_width=True, key=key_base+"_reset"):
+        exe("DELETE FROM natation_splits WHERE resultat_id=?", (result_id,))
+        exe(
+            """UPDATE natation_resultats
+               SET temps_final=NULL,mode_saisie=NULL,statut='Prévu'
+               WHERE id=?""",
+            (result_id,),
+        )
+        st.session_state.pop(start_key, None)
+        st.session_state.pop(running_key, None)
+        st.rerun()
+
 
 def _round_robin(team_ids):
     ids = list(team_ids)
@@ -36,8 +454,11 @@ def _round_robin(team_ids):
 
 def render_sports_co(st, rows, one, exe, date):
     st.markdown("### 🏆 Équipes • Matchs • Tournois")
-    st.caption("Rugby • Basket-ball • Handball • Volley-ball • Football • Futsal • Badminton • Pelote Basque")
+    st.caption("Natation • Rugby • Basket-ball • Handball • Volley-ball • Football • Futsal • Badminton • Pelote Basque")
     sport = st.selectbox("Sport / activité", SPORTS_CO, key="sc_sport")
+    if sport == "Natation":
+        render_natation_competition(st, rows, one, exe, date)
+        return
     individuel = sport in ("Badminton", "Pelote Basque")
     participant_label = "joueur / paire" if individuel else "équipe"
     if sport == "Badminton":
