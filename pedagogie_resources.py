@@ -189,6 +189,82 @@ def init_pedagogy_schema(get_conn, use_postgres: bool) -> None:
         conn.commit()
     finally:
         _close(conn)
+    init_resource_competency_schema(get_conn)
+
+
+def init_resource_competency_schema(get_conn) -> None:
+    """Crée la table de liaison ressource ↔ compétence."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS ressource_competences(
+                ressource_id INTEGER NOT NULL,
+                competence_id INTEGER NOT NULL,
+                PRIMARY KEY(ressource_id, competence_id)
+            )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_ressource_competences_resource
+               ON ressource_competences(ressource_id)"""
+        )
+        conn.commit()
+    finally:
+        _close(conn)
+
+
+def get_resource_competencies(get_conn, resource_id: int):
+    """Retourne les compétences réellement liées à une ressource."""
+    conn = get_conn()
+    try:
+        return _fetchall(
+            conn,
+            """SELECT c.id,c.activite,c.code,c.libelle
+               FROM ressource_competences rc
+               JOIN competences c ON c.id=rc.competence_id
+               WHERE rc.ressource_id=?
+               ORDER BY c.code,c.id""",
+            (int(resource_id),),
+        )
+    except Exception:
+        # Compatibilité avec une base ancienne pendant la migration.
+        return []
+    finally:
+        _close(conn)
+
+
+def set_resource_competencies(get_conn, resource_id: int, competence_codes) -> None:
+    """Remplace les liens d'une ressource par les codes de son activité."""
+    codes = []
+    for code in competence_codes or []:
+        cleaned = str(code or "").strip()
+        if cleaned and cleaned not in codes:
+            codes.append(cleaned)
+
+    conn = get_conn()
+    try:
+        resource = _fetchone(
+            conn,
+            "SELECT activite FROM ressources_pedagogiques WHERE id=?",
+            (int(resource_id),),
+        )
+        if not resource:
+            raise ValueError("Ressource introuvable.")
+        conn.execute("DELETE FROM ressource_competences WHERE ressource_id=?", (int(resource_id),))
+        for code in codes:
+            comp = _fetchone(
+                conn,
+                "SELECT id FROM competences WHERE activite=? AND code=?",
+                (str(resource["activite"]), code),
+            )
+            if comp:
+                conn.execute(
+                    """INSERT INTO ressource_competences(ressource_id,competence_id)
+                       VALUES(?,?) ON CONFLICT DO NOTHING""",
+                    (int(resource_id), int(comp["id"])),
+                )
+        conn.commit()
+    finally:
+        _close(conn)
 
 
 def _validate_resource_fields(activity, resource_type, title, author, official):
@@ -680,6 +756,12 @@ def render_teacher_resources(st, *, get_conn, use_postgres, exec_sql, activities
     st.caption(f"{resource['activite']} • {resource['type_ressource']} • {resource['auteur']}{official_badge}{student_badge}")
     if resource.get("description"):
         st.write(resource["description"])
+    linked_competencies = get_resource_competencies(get_conn, int(resource["id"]))
+    if linked_competencies:
+        st.markdown(
+            "**🔗 Compétences liées :** "
+            + " • ".join(f"{comp['code']} — {comp['libelle']}" for comp in linked_competencies)
+        )
     if resource["type_ressource"] == "Séance":
         _render_session_content(st, resource.get("contenu") or {})
     elif resource.get("contenu"):
@@ -818,6 +900,12 @@ def render_student_resources(st, *, get_conn) -> None:
     st.caption(f"{resource['activite']} • {resource['type_ressource']} • {resource['auteur']}")
     if resource.get("description"):
         st.write(resource["description"])
+    linked_competencies = get_resource_competencies(get_conn, int(resource["id"]))
+    if linked_competencies:
+        st.markdown(
+            "**🔗 Compétences travaillées :** "
+            + " • ".join(f"{comp['code']} — {comp['libelle']}" for comp in linked_competencies)
+        )
     if resource["type_ressource"] == "Séance":
         _render_session_content(st, resource.get("contenu") or {})
     if resource.get("lien_externe"):
