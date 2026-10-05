@@ -1,7 +1,8 @@
 """Fonds officiel de 55 séances pédagogiques SUAPS UPPA."""
 from __future__ import annotations
 
-from pedagogie_resources import create_resource
+from pedagogie_resources import create_resource, list_resources, set_resource_competencies, init_resource_competency_schema
+from pedagogy_cycle_seeds import CYCLE_SESSION_SEEDS, SSA_COMPETENCIES
 
 
 def _session(slug, activity, number, title, objective, competences, material,
@@ -193,8 +194,86 @@ for n,t,o,c,w,si,v,cr,b in SURF:
 OFFICIAL_SESSIONS = tuple(S)
 
 
+def _ensure_ssa_competencies(get_conn) -> None:
+    conn = get_conn()
+    try:
+        for code, label in SSA_COMPETENCIES:
+            conn.execute(
+                """INSERT INTO competences(activite,code,libelle)
+                   VALUES(?,?,?)
+                   ON CONFLICT(activite,code)
+                   DO UPDATE SET libelle=excluded.libelle""",
+                ("Sauvetage", code, label),
+            )
+        conn.commit()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _cycle_slug(activity: str) -> str:
+    return {
+        "Course à pied": "course-vma",
+        "Natation": "natation-competition",
+        "Rugby": "rugby-universitaire",
+        "Sauvetage": "ssa",
+    }[activity]
+
+
+def _seed_uploaded_cycles(get_conn) -> int:
+    """Ajoute les 53 séances issues des quatre cycles fournis et lie les compétences."""
+    init_resource_competency_schema(get_conn)
+    _ensure_ssa_competencies(get_conn)
+    created = 0
+
+    for session in CYCLE_SESSION_SEEDS:
+        seed_key = f"suaps:cycle-2026-2027:{_cycle_slug(session['activity'])}:{session['number']:02d}"
+        content = {
+            "numero": session["number"],
+            "objectif": session["objective"],
+            "competences": session["competencies"],
+            "materiel": session["material"],
+            "echauffement": session["warmup"],
+            "situations": session["situations"],
+            "variables": [],
+            "criteres_reussite": session["criteria"],
+            "securite": session["safety"],
+            "retour_bilan": session["bilan"],
+            "cycle": "2026-2027",
+            "source": "Cycle pédagogique fourni par le SUAPS",
+        }
+        if create_resource(
+            get_conn,
+            activity=session["activity"],
+            resource_type="Séance",
+            title=f"Cycle 2026-2027 • {session['title']}",
+            description=session["description"],
+            content=content,
+            author="SUAPS UPPA",
+            visible_students=False,
+            official=True,
+            seed_key=seed_key,
+        ):
+            created += 1
+
+        resource = next(
+            (r for r in list_resources(get_conn, activity=session["activity"], official=True)
+             if r.get("seed_key") == seed_key),
+            None,
+        )
+        if resource:
+            set_resource_competencies(
+                get_conn,
+                int(resource["id"]),
+                session["competencies"],
+            )
+    return created
+
+
 def seed_official_resources(get_conn, use_postgres: bool) -> int:
-    """Insère le fonds officiel une seule fois; retourne le nombre de créations."""
+    """Insère le fonds officiel historique puis les cycles 2026-2027 fournis."""
     created = 0
     for session in OFFICIAL_SESSIONS:
         content = {
@@ -222,4 +301,6 @@ def seed_official_resources(get_conn, use_postgres: bool) -> int:
             seed_key=session["seed_key"],
         ):
             created += 1
+
+    created += _seed_uploaded_cycles(get_conn)
     return created
