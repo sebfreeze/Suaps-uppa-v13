@@ -33,16 +33,27 @@ def _as_positive_int(value):
     except Exception:
         return None
 
-def assign_series_lines(rows, max_lines=5):
-    """Assign missing series/line by ascending level.
+def _center_out_lines(max_lines):
+    """Swimming seeding order: center first, then alternating around center."""
+    max_lines = max(1, int(max_lines or 5))
+    center = (max_lines + 1) / 2.0
+    return sorted(range(1, max_lines + 1), key=lambda line: (abs(line - center), line))
 
-    Series 1 contains the weakest available teams; higher series numbers
-    contain progressively stronger teams. Explicit series+line are preserved.
+def assign_series_lines(rows, max_lines=5):
+    """Assign missing series/line using swimming-style seeding.
+
+    Rules:
+    - higher series number = stronger heat;
+    - strongest teams fill the last series first;
+    - the first series may therefore be incomplete;
+    - inside each series, lane order is center-out (for 5 lanes: 3,2,4,1,5);
+    - explicit series+line assignments are preserved.
     """
     max_lines = max(1, int(max_lines or 5))
     output = [dict(row) for row in rows]
     occupied = set()
     autos = []
+    max_locked_series = 0
 
     for index, row in enumerate(output):
         series = _as_positive_int(row.get("series"))
@@ -51,26 +62,37 @@ def assign_series_lines(rows, max_lines=5):
             row["series"] = series
             row["line"] = line
             occupied.add((series, line))
+            max_locked_series = max(max_locked_series, series)
         else:
             row["series"] = None
             row["line"] = None
             autos.append((parse_level(row.get("level")), index))
 
-    autos.sort(key=lambda x: (x[0], x[1]))
-    series = 1
-    line = 1
-    for _, index in autos:
-        while (series, line) in occupied:
-            line += 1
-            if line > max_lines:
-                series += 1
-                line = 1
+    total_rows = len(output)
+    series_count = max(
+        max_locked_series,
+        int(math.ceil(total_rows / float(max_lines))) if total_rows else 1,
+    )
+    lane_order = _center_out_lines(max_lines)
+
+    # Strongest first, and highest-numbered series first.
+    autos.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    available_slots = []
+    for series in range(series_count, 0, -1):
+        for line in lane_order:
+            if (series, line) not in occupied:
+                available_slots.append((series, line))
+
+    # If manual placements consume so much capacity that more series are needed,
+    # append new stronger series above the current last series.
+    next_series = series_count + 1
+    while len(available_slots) < len(autos):
+        for line in lane_order:
+            available_slots.insert(0, (next_series, line))
+        next_series += 1
+
+    for (_, index), (series, line) in zip(autos, available_slots):
         output[index]["series"] = series
         output[index]["line"] = line
-        occupied.add((series, line))
-        line += 1
-        if line > max_lines:
-            series += 1
-            line = 1
 
     return output
