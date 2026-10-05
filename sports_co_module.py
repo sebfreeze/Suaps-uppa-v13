@@ -69,6 +69,11 @@ def init_sports_co_db(exe):
         UNIQUE(resultat_id,numero)
     )""")
 
+    try:
+        exe("ALTER TABLE natation_equipes ADD COLUMN serie INTEGER DEFAULT 1")
+    except Exception:
+        pass
+
 
 
 def _swim_seconds(value):
@@ -124,6 +129,41 @@ def _ensure_swim_default_competition(rows, one, exe, date):
             (comp["id"], code, nom, bloc, coef, splits, ordre),
         )
     return one("SELECT * FROM natation_competitions WHERE id=?", (comp["id"],))
+
+
+
+def _swim_next_slot(rows, competition_id, categorie, nb_lignes=5):
+    """Première ligne libre, en ouvrant automatiquement une nouvelle série si besoin."""
+    teams = rows(
+        """SELECT serie,ligne FROM natation_equipes
+           WHERE competition_id=? AND categorie=?
+           ORDER BY serie,ligne,id""",
+        (competition_id, categorie),
+    )
+    occupied = {
+        (int(t["serie"] or 1), int(t["ligne"] or 0))
+        for t in teams
+        if t["ligne"]
+    }
+    serie = 1
+    while True:
+        for ligne in range(1, int(nb_lignes) + 1):
+            if (serie, ligne) not in occupied:
+                return serie, ligne
+        serie += 1
+
+
+def _swim_series_summary(rows, competition_id, categorie, nb_lignes=5):
+    teams = rows(
+        """SELECT serie,COUNT(*) n FROM natation_equipes
+           WHERE competition_id=? AND categorie=?
+           GROUP BY serie ORDER BY serie""",
+        (competition_id, categorie),
+    )
+    return {
+        int(t["serie"] or 1): int(t["n"] or 0)
+        for t in teams
+    }
 
 
 def _swim_result(rows, one, exe, comp_id, team_id, event_id):
@@ -195,29 +235,113 @@ def render_natation_competition(st, rows, one, exe, date):
     )
 
     if tab == "👥 Équipes":
+        st.caption(
+            "Une série contient au maximum 5 équipes. L'affectation automatique ouvre "
+            "la série suivante dès que les 5 lignes sont occupées."
+        )
         with st.form("swim_team_create"):
             c1, c2 = st.columns(2)
-            universite = c1.selectbox("Université", ["UPPA", "Toulouse", "Bordeaux", "Autre"])
-            categorie = c2.selectbox("Catégorie", ["Masculin", "Féminin", "Mixte"])
-            c3, c4 = st.columns(2)
-            nom = c3.text_input("Nom de l'équipe", placeholder="Ex. UPPA Mixte 1")
-            ligne = c4.number_input("Ligne d'eau", min_value=1, max_value=5, value=1, step=1)
-            add = st.form_submit_button("Créer l'équipe", type="primary", use_container_width=True)
-        if add and nom.strip():
-            exe(
-                """INSERT INTO natation_equipes(
-                    competition_id,nom,universite,categorie,ligne
-                ) VALUES(?,?,?,?,?)
-                ON CONFLICT(competition_id,nom,categorie)
-                DO UPDATE SET universite=excluded.universite,ligne=excluded.ligne""",
-                (comp["id"], nom.strip(), universite, categorie, int(ligne)),
+            university_choice = c1.selectbox(
+                "Université / AS",
+                ["UPPA", "Toulouse", "Bordeaux", "Autre / saisie libre"],
             )
-            st.success("Équipe enregistrée.")
-            st.rerun()
+            categorie = c2.selectbox("Catégorie", ["Masculin", "Féminin", "Mixte"])
+            university_free = st.text_input(
+                "Nom de l'université / AS (si autre)",
+                placeholder="Ex. Limoges, La Rochelle, ENSMA…",
+            )
+            nom = st.text_input(
+                "Nom de l'équipe",
+                placeholder="Ex. Limoges Mixte 1",
+            )
+            assignment = st.radio(
+                "Affectation dans les séries",
+                ["Automatique", "Manuelle"],
+                horizontal=True,
+            )
+            c3, c4 = st.columns(2)
+            serie_manual = c3.number_input(
+                "Série",
+                min_value=1,
+                value=1,
+                step=1,
+                disabled=assignment == "Automatique",
+            )
+            ligne_manual = c4.number_input(
+                "Ligne d'eau",
+                min_value=1,
+                max_value=5,
+                value=1,
+                step=1,
+                disabled=assignment == "Automatique",
+            )
+            add = st.form_submit_button(
+                "Créer l'équipe",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if add and nom.strip():
+            universite = (
+                university_free.strip()
+                if university_choice == "Autre / saisie libre"
+                else university_choice
+            )
+            if not universite:
+                st.error("Renseigne le nom de l'université / AS.")
+            else:
+                if assignment == "Automatique":
+                    serie, ligne = _swim_next_slot(
+                        rows,
+                        comp["id"],
+                        categorie,
+                        int(comp["nb_lignes"] or 5),
+                    )
+                else:
+                    serie, ligne = int(serie_manual), int(ligne_manual)
+                    occupied = rows(
+                        """SELECT id,nom FROM natation_equipes
+                           WHERE competition_id=? AND categorie=?
+                             AND serie=? AND ligne=?""",
+                        (comp["id"], categorie, serie, ligne),
+                    )
+                    if occupied:
+                        st.error(
+                            f"Série {serie}, ligne {ligne} est déjà occupée par "
+                            f"{occupied[0]['nom']}."
+                        )
+                        return
+
+                exe(
+                    """INSERT INTO natation_equipes(
+                        competition_id,nom,universite,categorie,ligne,serie
+                    ) VALUES(?,?,?,?,?,?)
+                    ON CONFLICT(competition_id,nom,categorie)
+                    DO UPDATE SET universite=excluded.universite,
+                                  ligne=excluded.ligne,
+                                  serie=excluded.serie""",
+                    (comp["id"], nom.strip(), universite, categorie, ligne, serie),
+                )
+                st.success(
+                    f"Équipe enregistrée • Série {serie} • Ligne {ligne}."
+                )
+                st.rerun()
+
+        for cat in ["Masculin", "Féminin", "Mixte"]:
+            summary = _swim_series_summary(
+                rows, comp["id"], cat, int(comp["nb_lignes"] or 5)
+            )
+            if summary:
+                text = " • ".join(
+                    f"Série {serie}: {count}/5"
+                    for serie, count in summary.items()
+                )
+                st.caption(f"**{cat}** — {text}")
+
         teams = rows(
             """SELECT * FROM natation_equipes
                WHERE competition_id=?
-               ORDER BY categorie,ligne,universite,nom""",
+               ORDER BY categorie,serie,ligne,universite,nom""",
             (comp["id"],),
         )
         if teams:
@@ -225,8 +349,9 @@ def render_natation_competition(st, rows, one, exe, date):
                 [
                     {
                         "Catégorie": t["categorie"],
+                        "Série": int(t["serie"] or 1),
                         "Ligne": t["ligne"],
-                        "Université": t["universite"],
+                        "Université / AS": t["universite"],
                         "Équipe": t["nom"],
                     }
                     for t in teams
@@ -245,7 +370,7 @@ def render_natation_competition(st, rows, one, exe, date):
     )
     teams = rows(
         """SELECT * FROM natation_equipes
-           WHERE competition_id=? ORDER BY categorie,ligne,nom""",
+           WHERE competition_id=? ORDER BY categorie,serie,ligne,nom""",
         (comp["id"],),
     )
 
@@ -253,12 +378,12 @@ def render_natation_competition(st, rows, one, exe, date):
         data = []
         for r in rows(
             """SELECT nr.*,ne.code,ne.nom epreuve,ne.bloc,ne.coefficient,
-                      e.nom equipe,e.universite,e.categorie,e.ligne
+                      e.nom equipe,e.universite,e.categorie,e.ligne,e.serie
                FROM natation_resultats nr
                JOIN natation_epreuves ne ON ne.id=nr.epreuve_id
                JOIN natation_equipes e ON e.id=nr.equipe_id
                WHERE nr.competition_id=?
-               ORDER BY e.categorie,ne.ordre,e.ligne,e.nom""",
+               ORDER BY e.categorie,ne.ordre,e.serie,e.ligne,e.nom""",
             (comp["id"],),
         ):
             splits = rows(
@@ -269,6 +394,7 @@ def render_natation_competition(st, rows, one, exe, date):
                 {
                     "Catégorie": r["categorie"],
                     "Épreuve": r["epreuve"],
+                    "Série": int(r["serie"] or 1),
                     "Ligne": r["ligne"],
                     "Équipe": r["equipe"],
                     "Temps final": _swim_fmt(r["temps_final"]),
@@ -305,7 +431,7 @@ def render_natation_competition(st, rows, one, exe, date):
     team = st.selectbox(
         "Équipe / ligne",
         eligible,
-        format_func=lambda r: f"Ligne {r['ligne']} • {r['universite']} • {r['nom']}",
+        format_func=lambda r: f"Série {int(r['serie'] or 1)} • Ligne {r['ligne']} • {r['universite']} • {r['nom']}",
         key="swim_team",
     )
     result = _swim_result(rows, one, exe, comp["id"], team["id"], event["id"])
@@ -315,7 +441,7 @@ def render_natation_competition(st, rows, one, exe, date):
     running_key = key_base + "_running"
 
     st.markdown(
-        f"#### Ligne {team['ligne']} • {team['nom']}  
+        f"#### Série {int(team['serie'] or 1)} • Ligne {team['ligne']} • {team['nom']}  
 "
         f"**{event['nom']}** • {int(event['nb_splits'] or 0)} temps intermédiaire(s) attendus"
     )
