@@ -1012,8 +1012,7 @@ def render_natation_competition(st, rows, one, exe, date):
     running_key = key_base + "_running"
 
     st.markdown(
-        f"#### Série {int(team['serie'] or 1)} • Ligne {team['ligne']} • {team['nom']}  
-"
+        f"#### Série {int(team['serie'] or 1)} • Ligne {team['ligne']} • {team['nom']}  \n"
         f"**{event['nom']}** • {int(event['nb_splits'] or 0)} temps intermédiaire(s) attendus"
     )
 
