@@ -2,6 +2,7 @@
 import time as _time
 from io import BytesIO as _BytesIO
 import pandas as pd
+from swim_import_utils import assign_series_lines, parse_level
 
 SPORTS_CO = ["Natation", "Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote Basque"]
 
@@ -75,6 +76,12 @@ def init_sports_co_db(exe):
         exe("ALTER TABLE natation_equipes ADD COLUMN serie INTEGER DEFAULT 1")
     except Exception:
         pass
+
+    for col, typ in [("niveau", "TEXT"), ("placement_verrouille", "INTEGER DEFAULT 0")]:
+        try:
+            exe(f"ALTER TABLE natation_equipes ADD COLUMN {col} {typ}")
+        except Exception:
+            pass
 
     exe("""CREATE TABLE IF NOT EXISTS natation_records_reference(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -175,6 +182,165 @@ def _swim_series_summary(rows, competition_id, categorie, nb_lignes=5):
         int(t["serie"] or 1): int(t["n"] or 0)
         for t in teams
     }
+
+
+
+def _swim_category_label(value):
+    text = str(value or "").strip().lower()
+    if text.startswith("mix") or text == "x":
+        return "Mixte"
+    if text.startswith("m"):
+        return "Masculin"
+    if text.startswith("f"):
+        return "Féminin"
+    return None
+
+
+def _swim_reflow_category(rows, exe, competition_id, categorie, max_lines=5, unlock_all=False):
+    teams = rows(
+        """SELECT * FROM natation_equipes
+           WHERE competition_id=? AND categorie=?
+           ORDER BY id""",
+        (competition_id, categorie),
+    )
+    payload = []
+    for t in teams:
+        locked = int(t.get("placement_verrouille") or 0)
+        payload.append(
+            {
+                "team": str(t["id"]),
+                "level": t.get("niveau"),
+                "series": None if (unlock_all or not locked) else t.get("serie"),
+                "line": None if (unlock_all or not locked) else t.get("ligne"),
+            }
+        )
+    assigned = assign_series_lines(payload, max_lines=max_lines)
+    by_id = {int(a["team"]): a for a in assigned}
+    for t in teams:
+        pos = by_id[int(t["id"])]
+        exe(
+            """UPDATE natation_equipes
+               SET serie=?,ligne=?,placement_verrouille=?
+               WHERE id=?""",
+            (
+                int(pos["series"]),
+                int(pos["line"]),
+                0 if unlock_all else int(t.get("placement_verrouille") or 0),
+                int(t["id"]),
+            ),
+        )
+
+
+def _swim_import_dataframe(uploaded):
+    name = (uploaded.name or "").lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(uploaded, sep=None, engine="python")
+    return pd.read_excel(uploaded)
+
+
+def _swim_import_model_bytes():
+    model = pd.DataFrame(
+        [
+            {
+                "Université / AS": "UPPA",
+                "Nom équipe": "UPPA Mixte 1",
+                "Catégorie": "Mixte",
+                "Niveau": 2,
+                "Série": "",
+                "Ligne": "",
+            },
+            {
+                "Université / AS": "Toulouse",
+                "Nom équipe": "Toulouse Mixte 1",
+                "Catégorie": "Mixte",
+                "Niveau": 3,
+                "Série": 2,
+                "Ligne": 3,
+            },
+        ]
+    )
+    csv_bytes = model.to_csv(index=False).encode("utf-8-sig")
+    xlsx_buffer = _BytesIO()
+    with pd.ExcelWriter(xlsx_buffer, engine="openpyxl") as writer:
+        model.to_excel(writer, index=False, sheet_name="Équipes")
+    return csv_bytes, xlsx_buffer.getvalue()
+
+
+def _swim_prepare_import(df):
+    aliases = {
+        "université / as": "universite",
+        "universite / as": "universite",
+        "université": "universite",
+        "universite": "universite",
+        "as": "universite",
+        "nom équipe": "nom",
+        "nom equipe": "nom",
+        "équipe": "nom",
+        "equipe": "nom",
+        "catégorie": "categorie",
+        "categorie": "categorie",
+        "niveau": "niveau",
+        "série": "serie",
+        "serie": "serie",
+        "ligne": "ligne",
+        "ligne d'eau": "ligne",
+        "ligne d’eau": "ligne",
+    }
+    renamed = {}
+    for col in df.columns:
+        key = str(col).strip().lower()
+        if key in aliases:
+            renamed[col] = aliases[key]
+    work = df.rename(columns=renamed).copy()
+    required = ["universite", "nom", "categorie", "niveau"]
+    missing = [x for x in required if x not in work.columns]
+    if missing:
+        return None, "Colonnes obligatoires manquantes : " + ", ".join(missing)
+    if "serie" not in work.columns:
+        work["serie"] = None
+    if "ligne" not in work.columns:
+        work["ligne"] = None
+
+    prepared = []
+    errors = []
+    for idx, r in work.iterrows():
+        universite = str(r.get("universite") or "").strip()
+        nom = str(r.get("nom") or "").strip()
+        categorie = _swim_category_label(r.get("categorie"))
+        niveau = parse_level(r.get("niveau"))
+        if not universite or not nom or not categorie:
+            errors.append(f"Ligne {idx + 2}")
+            continue
+
+        def _opt_int(v):
+            try:
+                if pd.isna(v) or str(v).strip() == "":
+                    return None
+                n = int(float(v))
+                return n if n > 0 else None
+            except Exception:
+                return None
+
+        serie = _opt_int(r.get("serie"))
+        ligne = _opt_int(r.get("ligne"))
+        if ligne is not None and not 1 <= ligne <= 5:
+            errors.append(f"Ligne {idx + 2} : ligne d'eau hors 1-5")
+            continue
+        locked = int(serie is not None and ligne is not None)
+        prepared.append(
+            {
+                "universite": universite,
+                "nom": nom,
+                "categorie": categorie,
+                "niveau": niveau,
+                "serie": serie if locked else None,
+                "ligne": ligne if locked else None,
+                "locked": locked,
+            }
+        )
+    if errors:
+        return None, "Import à corriger : " + " ; ".join(errors[:8])
+    return prepared, None
 
 
 def _swim_result(rows, one, exe, comp_id, team_id, event_id):
@@ -404,9 +570,108 @@ def render_natation_competition(st, rows, one, exe, date):
 
     if tab == "👥 Équipes":
         st.caption(
-            "Une série contient au maximum 5 équipes. L'affectation automatique ouvre "
-            "la série suivante dès que les 5 lignes sont occupées."
+            "5 équipes maximum par série. La dernière série est la plus forte. "
+            "Ordre des lignes dans chaque série : 3 → 2 → 4 → 1 → 5."
         )
+
+        st.markdown("#### 📥 Importer les équipes")
+        model_csv, model_xlsx = _swim_import_model_bytes()
+        mc1, mc2 = st.columns(2)
+        mc1.download_button(
+            "⬇️ Modèle CSV",
+            data=model_csv,
+            file_name="modele_equipes_natation.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        mc2.download_button(
+            "⬇️ Modèle Excel",
+            data=model_xlsx,
+            file_name="modele_equipes_natation.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+        upload = st.file_uploader(
+            "Importer un fichier Excel ou CSV",
+            type=["xlsx", "csv"],
+            key="swim_team_import",
+        )
+        if upload is not None:
+            try:
+                imported_df = _swim_import_dataframe(upload)
+                prepared, import_error = _swim_prepare_import(imported_df)
+            except Exception as exc:
+                prepared, import_error = None, f"Lecture impossible : {exc}"
+            if import_error:
+                st.error(import_error)
+            elif prepared is not None:
+                st.success(f"{len(prepared)} équipe(s) prête(s) à importer.")
+                st.caption(
+                    "Si Série et Ligne sont vides, l'APK répartit par niveau : "
+                    "dernière série = plus forte, avec lignes 3-2-4-1-5."
+                )
+                if st.button(
+                    "Importer et répartir par niveau",
+                    type="primary",
+                    use_container_width=True,
+                    key="swim_import_confirm",
+                ):
+                    touched_categories = set()
+                    for item in prepared:
+                        exe(
+                            """INSERT INTO natation_equipes(
+                                competition_id,nom,universite,categorie,niveau,
+                                serie,ligne,placement_verrouille
+                            ) VALUES(?,?,?,?,?,?,?,?)
+                            ON CONFLICT(competition_id,nom,categorie)
+                            DO UPDATE SET universite=excluded.universite,
+                                          niveau=excluded.niveau,
+                                          serie=excluded.serie,
+                                          ligne=excluded.ligne,
+                                          placement_verrouille=excluded.placement_verrouille""",
+                            (
+                                comp["id"],
+                                item["nom"],
+                                item["universite"],
+                                item["categorie"],
+                                str(item["niveau"]),
+                                item["serie"],
+                                item["ligne"],
+                                item["locked"],
+                            ),
+                        )
+                        touched_categories.add(item["categorie"])
+                    for cat in touched_categories:
+                        _swim_reflow_category(
+                            rows,
+                            exe,
+                            comp["id"],
+                            cat,
+                            int(comp["nb_lignes"] or 5),
+                            unlock_all=False,
+                        )
+                    st.success("Import terminé et séries recalculées par niveau.")
+                    st.rerun()
+
+        if st.button(
+            "🔄 Refaire toutes les séries automatiquement par niveau",
+            use_container_width=True,
+            key="swim_reflow_all",
+        ):
+            for cat in ["Masculin", "Féminin", "Mixte"]:
+                _swim_reflow_category(
+                    rows,
+                    exe,
+                    comp["id"],
+                    cat,
+                    int(comp["nb_lignes"] or 5),
+                    unlock_all=True,
+                )
+            st.success("Séries recalculées : la dernière série contient les plus forts.")
+            st.rerun()
+
+        st.divider()
+        st.markdown("#### ➕ Ajouter une équipe manuellement")
         with st.form("swim_team_create"):
             c1, c2 = st.columns(2)
             university_choice = c1.selectbox(
@@ -418,30 +683,35 @@ def render_natation_competition(st, rows, one, exe, date):
                 "Nom de l'université / AS (si autre)",
                 placeholder="Ex. Limoges, La Rochelle, ENSMA…",
             )
-            nom = st.text_input(
-                "Nom de l'équipe",
-                placeholder="Ex. Limoges Mixte 1",
+            c3, c4 = st.columns(2)
+            nom = c3.text_input("Nom de l'équipe", placeholder="Ex. Limoges Mixte 1")
+            niveau = c4.number_input(
+                "Niveau",
+                min_value=0.0,
+                value=1.0,
+                step=0.5,
+                help="Plus la valeur est élevée, plus l'équipe est forte.",
             )
             assignment = st.radio(
-                "Affectation dans les séries",
-                ["Automatique", "Manuelle"],
+                "Placement",
+                ["Automatique par niveau", "Manuel"],
                 horizontal=True,
             )
-            c3, c4 = st.columns(2)
-            serie_manual = c3.number_input(
+            c5, c6 = st.columns(2)
+            serie_manual = c5.number_input(
                 "Série",
                 min_value=1,
                 value=1,
                 step=1,
-                disabled=assignment == "Automatique",
+                disabled=assignment == "Automatique par niveau",
             )
-            ligne_manual = c4.number_input(
+            ligne_manual = c6.number_input(
                 "Ligne d'eau",
                 min_value=1,
                 max_value=5,
-                value=1,
+                value=3,
                 step=1,
-                disabled=assignment == "Automatique",
+                disabled=assignment == "Automatique par niveau",
             )
             add = st.form_submit_button(
                 "Créer l'équipe",
@@ -457,42 +727,64 @@ def render_natation_competition(st, rows, one, exe, date):
             )
             if not universite:
                 st.error("Renseigne le nom de l'université / AS.")
-            else:
-                if assignment == "Automatique":
-                    serie, ligne = _swim_next_slot(
-                        rows,
-                        comp["id"],
-                        categorie,
-                        int(comp["nb_lignes"] or 5),
+            elif assignment == "Manuel":
+                serie, ligne = int(serie_manual), int(ligne_manual)
+                occupied = rows(
+                    """SELECT id,nom FROM natation_equipes
+                       WHERE competition_id=? AND categorie=?
+                         AND serie=? AND ligne=?""",
+                    (comp["id"], categorie, serie, ligne),
+                )
+                if occupied:
+                    st.error(
+                        f"Série {serie}, ligne {ligne} est déjà occupée par "
+                        f"{occupied[0]['nom']}."
                     )
                 else:
-                    serie, ligne = int(serie_manual), int(ligne_manual)
-                    occupied = rows(
-                        """SELECT id,nom FROM natation_equipes
-                           WHERE competition_id=? AND categorie=?
-                             AND serie=? AND ligne=?""",
-                        (comp["id"], categorie, serie, ligne),
+                    exe(
+                        """INSERT INTO natation_equipes(
+                            competition_id,nom,universite,categorie,niveau,
+                            serie,ligne,placement_verrouille
+                        ) VALUES(?,?,?,?,?,?,?,1)
+                        ON CONFLICT(competition_id,nom,categorie)
+                        DO UPDATE SET universite=excluded.universite,
+                                      niveau=excluded.niveau,
+                                      serie=excluded.serie,
+                                      ligne=excluded.ligne,
+                                      placement_verrouille=1""",
+                        (
+                            comp["id"], nom.strip(), universite, categorie,
+                            str(float(niveau)), serie, ligne
+                        ),
                     )
-                    if occupied:
-                        st.error(
-                            f"Série {serie}, ligne {ligne} est déjà occupée par "
-                            f"{occupied[0]['nom']}."
-                        )
-                        return
-
+                    st.success(f"Équipe enregistrée • Série {serie} • Ligne {ligne}.")
+                    st.rerun()
+            else:
                 exe(
                     """INSERT INTO natation_equipes(
-                        competition_id,nom,universite,categorie,ligne,serie
-                    ) VALUES(?,?,?,?,?,?)
+                        competition_id,nom,universite,categorie,niveau,
+                        serie,ligne,placement_verrouille
+                    ) VALUES(?,?,?,?,?,NULL,NULL,0)
                     ON CONFLICT(competition_id,nom,categorie)
                     DO UPDATE SET universite=excluded.universite,
-                                  ligne=excluded.ligne,
-                                  serie=excluded.serie""",
-                    (comp["id"], nom.strip(), universite, categorie, ligne, serie),
+                                  niveau=excluded.niveau,
+                                  serie=NULL,
+                                  ligne=NULL,
+                                  placement_verrouille=0""",
+                    (
+                        comp["id"], nom.strip(), universite, categorie,
+                        str(float(niveau))
+                    ),
                 )
-                st.success(
-                    f"Équipe enregistrée • Série {serie} • Ligne {ligne}."
+                _swim_reflow_category(
+                    rows,
+                    exe,
+                    comp["id"],
+                    categorie,
+                    int(comp["nb_lignes"] or 5),
+                    unlock_all=False,
                 )
+                st.success("Équipe enregistrée et séries recalculées.")
                 st.rerun()
 
         for cat in ["Masculin", "Féminin", "Mixte"]:
@@ -500,11 +792,11 @@ def render_natation_competition(st, rows, one, exe, date):
                 rows, comp["id"], cat, int(comp["nb_lignes"] or 5)
             )
             if summary:
-                text = " • ".join(
+                summary_text = " • ".join(
                     f"Série {serie}: {count}/5"
                     for serie, count in summary.items()
                 )
-                st.caption(f"**{cat}** — {text}")
+                st.caption(f"**{cat}** — {summary_text}")
 
         teams = rows(
             """SELECT * FROM natation_equipes
@@ -519,8 +811,10 @@ def render_natation_competition(st, rows, one, exe, date):
                         "Catégorie": t["categorie"],
                         "Série": int(t["serie"] or 1),
                         "Ligne": t["ligne"],
+                        "Niveau": t.get("niveau") or "",
                         "Université / AS": t["universite"],
                         "Équipe": t["nom"],
+                        "Placement": "Manuel" if int(t.get("placement_verrouille") or 0) else "Auto",
                     }
                     for t in teams
                 ],
@@ -528,7 +822,7 @@ def render_natation_competition(st, rows, one, exe, date):
                 hide_index=True,
             )
         else:
-            st.info("Crée les équipes avant le chronométrage.")
+            st.info("Crée ou importe les équipes avant le chronométrage.")
         return
 
     events = rows(
