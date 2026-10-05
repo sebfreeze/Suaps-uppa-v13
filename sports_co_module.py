@@ -1,5 +1,7 @@
 # Module Sports collectifs - équipes, matchs, tournois et photos
 import time as _time
+from io import BytesIO as _BytesIO
+import pandas as pd
 
 SPORTS_CO = ["Natation", "Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote Basque"]
 
@@ -73,6 +75,15 @@ def init_sports_co_db(exe):
         exe("ALTER TABLE natation_equipes ADD COLUMN serie INTEGER DEFAULT 1")
     except Exception:
         pass
+
+    exe("""CREATE TABLE IF NOT EXISTS natation_records_reference(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        competition_id INTEGER NOT NULL,
+        categorie TEXT NOT NULL,
+        code_epreuve TEXT NOT NULL,
+        temps_rm REAL,
+        UNIQUE(competition_id,categorie,code_epreuve)
+    )""")
 
 
 
@@ -208,6 +219,163 @@ def _save_swim_split(rows, exe, result_id, cumulative, source):
     )
 
 
+
+def _swim_reference_code(event_code):
+    if event_code == "C1":
+        return "C1"
+    if event_code in {"C2-PAP", "C2-DOS", "C2-BR", "C2-NL"}:
+        return event_code
+    if event_code == "C3":
+        return "C3"
+    return None
+
+
+def _swim_points(rm_seconds, performance_seconds):
+    if rm_seconds is None or performance_seconds is None:
+        return None
+    try:
+        rm = float(rm_seconds)
+        perf = float(performance_seconds)
+    except Exception:
+        return None
+    if rm <= 0 or perf <= 0:
+        return None
+    return rm / perf * 100.0
+
+
+def _swim_rankings(rows, comp_id, category):
+    """Calcule classements C1, C2, C3 et général pour une catégorie."""
+    teams = rows(
+        """SELECT * FROM natation_equipes
+           WHERE competition_id=? AND categorie=?
+           ORDER BY serie,ligne,nom""",
+        (comp_id, category),
+    )
+    refs = rows(
+        """SELECT code_epreuve,temps_rm
+           FROM natation_records_reference
+           WHERE competition_id=? AND categorie=?""",
+        (comp_id, category),
+    )
+    ref_map = {r["code_epreuve"]: r["temps_rm"] for r in refs}
+
+    results = rows(
+        """SELECT nr.*,ne.code,ne.bloc,ne.nom epreuve
+           FROM natation_resultats nr
+           JOIN natation_epreuves ne ON ne.id=nr.epreuve_id
+           WHERE nr.competition_id=? AND nr.temps_final IS NOT NULL""",
+        (comp_id,),
+    )
+    by_team = {}
+    for team in teams:
+        by_team[int(team["id"])] = {
+            "Équipe": team["nom"],
+            "Université / AS": team["universite"],
+            "Catégorie": category,
+            "Série": int(team["serie"] or 1),
+            "Ligne": int(team["ligne"] or 0),
+            "C1": None,
+            "C2-PAP": None,
+            "C2-DOS": None,
+            "C2-BR": None,
+            "C2-NL": None,
+            "C2": None,
+            "C3": None,
+            "Général": None,
+        }
+
+    for r in results:
+        tid = int(r["equipe_id"])
+        if tid not in by_team:
+            continue
+        code = r["code"]
+        ref_code = _swim_reference_code(code)
+        if not ref_code or ref_code not in ref_map:
+            continue
+        pts = _swim_points(ref_map[ref_code], r["temps_final"])
+        if pts is not None:
+            by_team[tid][code] = pts
+
+    out = list(by_team.values())
+    for item in out:
+        c2_parts = [
+            item.get("C2-PAP"),
+            item.get("C2-DOS"),
+            item.get("C2-BR"),
+            item.get("C2-NL"),
+        ]
+        if all(v is not None for v in c2_parts):
+            item["C2"] = sum(c2_parts) / 4.0
+        if item.get("C1") is not None and item.get("C2") is not None and item.get("C3") is not None:
+            item["Général"] = (
+                item["C1"] * 4.0
+                + item["C2"] * 4.0
+                + item["C3"] * 6.0
+            ) / 14.0
+    return out
+
+
+def _swim_sorted_table(rankings, format_name):
+    metric_map = {
+        "C1": "C1",
+        "C2": "C2",
+        "C3": "C3",
+        "Général": "Général",
+    }
+    metric = metric_map[format_name]
+    filtered = [r.copy() for r in rankings if r.get(metric) is not None]
+    filtered.sort(key=lambda r: float(r[metric]), reverse=True)
+    table = []
+    for idx, r in enumerate(filtered, start=1):
+        row = {
+            "Rang": idx,
+            "Équipe": r["Équipe"],
+            "Université / AS": r["Université / AS"],
+            "Catégorie": r["Catégorie"],
+            "Série": r["Série"],
+            "Ligne": r["Ligne"],
+        }
+        if format_name == "C1":
+            row["Points C1"] = round(r["C1"], 3)
+        elif format_name == "C2":
+            row["Pap"] = round(r["C2-PAP"], 3)
+            row["Dos"] = round(r["C2-DOS"], 3)
+            row["Brasse"] = round(r["C2-BR"], 3)
+            row["NL"] = round(r["C2-NL"], 3)
+            row["Points C2"] = round(r["C2"], 3)
+        elif format_name == "C3":
+            row["Points C3"] = round(r["C3"], 3)
+        else:
+            row["C1"] = round(r["C1"], 3)
+            row["C2"] = round(r["C2"], 3)
+            row["C3"] = round(r["C3"], 3)
+            row["Points général"] = round(r["Général"], 3)
+        table.append(row)
+    return table
+
+
+def _swim_export_excel(all_tables):
+    output = _BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for sheet_name, data in all_tables.items():
+            frame = pd.DataFrame(data)
+            frame.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+            ws = writer.book[sheet_name[:31]]
+            ws.freeze_panes = "A2"
+            for cell in ws[1]:
+                cell.font = cell.font.copy(bold=True)
+            for column_cells in ws.columns:
+                width = min(
+                    32,
+                    max(
+                        10,
+                        max(len(str(cell.value or "")) for cell in column_cells) + 2,
+                    ),
+                )
+                ws.column_dimensions[column_cells[0].column_letter].width = width
+    return output.getvalue()
+
+
 def _render_swim_timer_display(st, start_epoch, running):
     if not running or not start_epoch:
         return
@@ -229,7 +397,7 @@ def render_natation_competition(st, rows, one, exe, date):
 
     tab = st.radio(
         "Natation",
-        ["⏱️ Chronométrage", "👥 Équipes", "📊 Résultats"],
+        ["⏱️ Chronométrage", "👥 Équipes", "📊 Résultats", "🏅 Classements"],
         horizontal=True,
         key="swim_tab",
     )
@@ -373,6 +541,115 @@ def render_natation_competition(st, rows, one, exe, date):
            WHERE competition_id=? ORDER BY categorie,serie,ligne,nom""",
         (comp["id"],),
     )
+
+    if tab == "🏅 Classements":
+        st.markdown("#### 🏅 Classements par points")
+        st.caption(
+            "Formule : points = RM / performance × 100. "
+            "C2 = moyenne des 4 relais 100 m. Général = (C1×4 + C2×4 + C3×6) / 14."
+        )
+
+        category = st.selectbox(
+            "Catégorie du classement",
+            ["Masculin", "Féminin", "Mixte"],
+            key="swim_rank_category",
+        )
+        st.markdown("##### Références record du monde")
+        st.caption(
+            "Renseigne les références officielles en secondes. "
+            "Elles restent modifiables si la FFSU publie une actualisation."
+        )
+        ref_labels = [
+            ("C1", "400 4N"),
+            ("C2-PAP", "100 Pap"),
+            ("C2-DOS", "100 Dos"),
+            ("C2-BR", "100 Brasse"),
+            ("C2-NL", "100 NL"),
+            ("C3", "800 NL"),
+        ]
+        existing_refs = rows(
+            """SELECT code_epreuve,temps_rm
+               FROM natation_records_reference
+               WHERE competition_id=? AND categorie=?""",
+            (comp["id"], category),
+        )
+        ref_map = {r["code_epreuve"]: r["temps_rm"] for r in existing_refs}
+        with st.form(f"swim_refs_{category}"):
+            ref_values = {}
+            cols = st.columns(3)
+            for i, (code, label) in enumerate(ref_labels):
+                current = ref_map.get(code)
+                ref_values[code] = cols[i % 3].text_input(
+                    label,
+                    value=_swim_fmt(current).replace(" s", "") if current else "",
+                    key=f"rm_{category}_{code}",
+                )
+            save_refs = st.form_submit_button(
+                "Enregistrer les références",
+                use_container_width=True,
+            )
+        if save_refs:
+            invalid = []
+            parsed = {}
+            for code, value in ref_values.items():
+                sec = _swim_seconds(value)
+                if sec is None or sec <= 0:
+                    invalid.append(code)
+                else:
+                    parsed[code] = sec
+            if invalid:
+                st.error("Références invalides : " + ", ".join(invalid))
+            else:
+                for code, sec in parsed.items():
+                    exe(
+                        """INSERT INTO natation_records_reference(
+                            competition_id,categorie,code_epreuve,temps_rm
+                        ) VALUES(?,?,?,?)
+                        ON CONFLICT(competition_id,categorie,code_epreuve)
+                        DO UPDATE SET temps_rm=excluded.temps_rm""",
+                        (comp["id"], category, code, float(sec)),
+                    )
+                st.success("Références enregistrées.")
+                st.rerun()
+
+        rankings = _swim_rankings(rows, comp["id"], category)
+        format_name = st.radio(
+            "Format",
+            ["C1", "C2", "C3", "Général"],
+            horizontal=True,
+            key="swim_rank_format",
+        )
+        table = _swim_sorted_table(rankings, format_name)
+        if table:
+            st.dataframe(table, use_container_width=True, hide_index=True)
+            csv_data = pd.DataFrame(table).to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "⬇️ Export CSV du classement affiché",
+                data=csv_data,
+                file_name=f"classement_natation_{category}_{format_name}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        else:
+            st.info(
+                "Classement incomplet : renseigne les records de référence et les temps des épreuves."
+            )
+
+        st.markdown("##### Export Excel complet")
+        all_tables = {}
+        for cat in ["Masculin", "Féminin", "Mixte"]:
+            cat_rankings = _swim_rankings(rows, comp["id"], cat)
+            for fmt in ["C1", "C2", "C3", "Général"]:
+                all_tables[f"{cat[:3]}-{fmt}"] = _swim_sorted_table(cat_rankings, fmt)
+        xlsx = _swim_export_excel(all_tables)
+        st.download_button(
+            "⬇️ Export Excel complet",
+            data=xlsx,
+            file_name="classements_natation_SUAPS.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+        return
 
     if tab == "📊 Résultats":
         data = []
