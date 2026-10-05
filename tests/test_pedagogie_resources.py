@@ -20,6 +20,9 @@ from pedagogie_resources import (
     validate_external_url,
     validate_upload,
     verify_edit_code,
+    init_resource_competency_schema,
+    get_resource_competencies,
+    set_resource_competencies,
 )
 
 
@@ -293,3 +296,58 @@ def test_binary_list_never_exposes_blob(tmp_path):
     row = list_resources(get_conn)[0]
     assert "fichier_data" not in row
     assert get_resource_file(get_conn, row["id"])[2] == blob
+
+
+def test_resource_competencies_roundtrip(tmp_path):
+    get_conn = sqlite_factory(tmp_path)
+    init_pedagogy_schema(get_conn, False)
+    conn = get_conn()
+    conn.execute("CREATE TABLE competences(id INTEGER PRIMARY KEY AUTOINCREMENT, activite TEXT NOT NULL, code TEXT NOT NULL, libelle TEXT NOT NULL, UNIQUE(activite,code))")
+    conn.execute("INSERT INTO competences(activite,code,libelle) VALUES('Natation','NAT1','Respiration')")
+    conn.execute("INSERT INTO competences(activite,code,libelle) VALUES('Natation','NAT4','Virages')")
+    conn.commit()
+    conn.close()
+    init_resource_competency_schema(get_conn)
+
+    create_resource(
+        get_conn,
+        activity="Natation",
+        resource_type="Séance",
+        title="Séance virages",
+        author="SUAPS UPPA",
+        official=True,
+        seed_key="test:natation:virages",
+    )
+    resource_id = list_resources(get_conn)[0]["id"]
+    set_resource_competencies(get_conn, resource_id, ["NAT1", "NAT4"])
+
+    links = get_resource_competencies(get_conn, resource_id)
+    assert [x["code"] for x in links] == ["NAT1", "NAT4"]
+
+
+def test_cycle_seed_catalog_has_53_sessions_and_expected_counts():
+    from pedagogy_cycle_seeds import CYCLE_SESSION_SEEDS
+
+    assert len(CYCLE_SESSION_SEEDS) == 53
+    counts = {}
+    for session in CYCLE_SESSION_SEEDS:
+        counts[session["activity"]] = counts.get(session["activity"], 0) + 1
+        assert session["competencies"]
+        assert session["title"].startswith("Séance ")
+    assert counts == {
+        "Course à pied": 8,
+        "Natation": 10,
+        "Rugby": 13,
+        "Sauvetage": 22,
+    }
+
+
+def test_ssa_specific_competencies_are_present_in_seed_catalog():
+    from pedagogy_cycle_seeds import SSA_COMPETENCIES
+
+    assert [x[0] for x in SSA_COMPETENCIES] == ["SSA1", "SSA2", "SSA3", "SSA4", "SSA5"]
+    assert "rôle" in SSA_COMPETENCIES[0][1].lower()
+    assert "risques" in SSA_COMPETENCIES[1][1].lower()
+    assert "prévention" in SSA_COMPETENCIES[2][1].lower()
+    assert "surveillance" in SSA_COMPETENCIES[3][1].lower()
+    assert "sauvetage" in SSA_COMPETENCIES[4][1].lower()
