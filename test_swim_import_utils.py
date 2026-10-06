@@ -46,6 +46,20 @@ class SwimImportUtilsTest(unittest.TestCase):
         by_team = {r["team"]: r for r in out}
         self.assertEqual((by_team["Equipe A"]["series"], by_team["Equipe A"]["line"]), (4,3))
 
+    def test_preferred_lanes_are_applied_within_series(self):
+        rows = [
+            {"team":"UPPA 1","level":2,"preferred_line":3},
+            {"team":"Toulouse 1","level":2,"preferred_line":2},
+            {"team":"Bordeaux 1","level":2,"preferred_line":4},
+            {"team":"Autre A","level":1},
+            {"team":"Autre B","level":1},
+        ]
+        out = assign_series_lines(rows, max_lines=5)
+        by_team = {r["team"]: r for r in out}
+        self.assertEqual(by_team["UPPA 1"]["line"], 3)
+        self.assertEqual(by_team["Toulouse 1"]["line"], 2)
+        self.assertEqual(by_team["Bordeaux 1"]["line"], 4)
+
     def test_swimmer_status_aliases(self):
         self.assertEqual(normalize_swim_status("titulaire"), "Titulaire")
         self.assertEqual(normalize_swim_status("R"), "Remplaçant")
