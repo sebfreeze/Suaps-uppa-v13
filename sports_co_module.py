@@ -2,7 +2,7 @@
 import time as _time
 from io import BytesIO as _BytesIO
 import pandas as pd
-from swim_import_utils import assign_series_lines, parse_level
+from swim_import_utils import assign_series_lines, parse_level, normalize_swim_status, validate_swimmer_entries
 
 SPORTS_CO = ["Natation", "Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote Basque"]
 
@@ -90,6 +90,22 @@ def init_sports_co_db(exe):
         code_epreuve TEXT NOT NULL,
         temps_rm REAL,
         UNIQUE(competition_id,categorie,code_epreuve)
+    )""")
+
+    exe("""CREATE TABLE IF NOT EXISTS natation_nageurs(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        equipe_id INTEGER NOT NULL,
+        nom TEXT NOT NULL,
+        prenom TEXT,
+        sexe TEXT,
+        UNIQUE(equipe_id,nom,prenom)
+    )""")
+    exe("""CREATE TABLE IF NOT EXISTS natation_engagements(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nageur_id INTEGER NOT NULL,
+        code_epreuve TEXT NOT NULL,
+        statut TEXT NOT NULL,
+        UNIQUE(nageur_id,code_epreuve)
     )""")
 
 
@@ -248,6 +264,12 @@ def _swim_import_model_bytes():
                 "Niveau": 2,
                 "Série": "",
                 "Ligne": "",
+                "Nom nageur": "Dupont",
+                "Prénom nageur": "Léa",
+                "C1": "Titulaire",
+                "C2": "Titulaire",
+                "C3": "Titulaire",
+                "BONUS": "Engagé",
             },
             {
                 "Université / AS": "Toulouse",
@@ -256,6 +278,12 @@ def _swim_import_model_bytes():
                 "Niveau": 3,
                 "Série": 2,
                 "Ligne": 3,
+                "Nom nageur": "",
+                "Prénom nageur": "",
+                "C1": "",
+                "C2": "",
+                "C3": "",
+                "BONUS": "",
             },
         ]
     )
@@ -285,6 +313,16 @@ def _swim_prepare_import(df):
         "ligne": "ligne",
         "ligne d'eau": "ligne",
         "ligne d’eau": "ligne",
+        "nom nageur": "nageur_nom",
+        "nageur nom": "nageur_nom",
+        "prénom nageur": "nageur_prenom",
+        "prenom nageur": "nageur_prenom",
+        "nageur prénom": "nageur_prenom",
+        "nageur prenom": "nageur_prenom",
+        "c1": "eng_c1",
+        "c2": "eng_c2",
+        "c3": "eng_c3",
+        "bonus": "eng_bonus",
     }
     renamed = {}
     for col in df.columns:
@@ -300,6 +338,9 @@ def _swim_prepare_import(df):
         work["serie"] = None
     if "ligne" not in work.columns:
         work["ligne"] = None
+    for col in ["nageur_nom", "nageur_prenom", "eng_c1", "eng_c2", "eng_c3", "eng_bonus"]:
+        if col not in work.columns:
+            work[col] = None
 
     prepared = []
     errors = []
@@ -327,6 +368,27 @@ def _swim_prepare_import(df):
             errors.append(f"Ligne {idx + 2} : ligne d'eau hors 1-5")
             continue
         locked = int(serie is not None and ligne is not None)
+        nageur_nom = "" if pd.isna(r.get("nageur_nom")) else str(r.get("nageur_nom") or "").strip()
+        nageur_prenom = "" if pd.isna(r.get("nageur_prenom")) else str(r.get("nageur_prenom") or "").strip()
+        swimmer = None
+        engagements = []
+        if nageur_nom or nageur_prenom:
+            swimmer = {"nom": nageur_nom, "prenom": nageur_prenom}
+            swimmer_key = f"{nageur_nom}|{nageur_prenom}".strip("|")
+            for code, col, bonus in [
+                ("C1", "eng_c1", False),
+                ("C2", "eng_c2", False),
+                ("C3", "eng_c3", False),
+                ("BONUS", "eng_bonus", True),
+            ]:
+                raw = r.get(col)
+                status = normalize_swim_status(raw, bonus=bonus)
+                raw_text = "" if pd.isna(raw) else str(raw or "").strip()
+                if raw_text and not status:
+                    errors.append(f"Ligne {idx + 2} : statut {code} non reconnu")
+                if status:
+                    engagements.append({"swimmer": swimmer_key, "code": code, "status": status})
+
         prepared.append(
             {
                 "universite": universite,
@@ -336,8 +398,18 @@ def _swim_prepare_import(df):
                 "serie": serie if locked else None,
                 "ligne": ligne if locked else None,
                 "locked": locked,
+                "swimmer": swimmer,
+                "engagements": engagements,
             }
         )
+    if not errors:
+        grouped = {}
+        for item in prepared:
+            key = (item["universite"], item["nom"], item["categorie"])
+            grouped.setdefault(key, []).extend(item.get("engagements") or [])
+        for key, entries in grouped.items():
+            for msg in validate_swimmer_entries(entries):
+                errors.append(f"{key[1]} : {msg}")
     if errors:
         return None, "Import à corriger : " + " ; ".join(errors[:8])
     return prepared, None
@@ -605,9 +677,9 @@ def render_natation_competition(st, rows, one, exe, date):
             if import_error:
                 st.error(import_error)
             elif prepared is not None:
-                st.success(f"{len(prepared)} équipe(s) prête(s) à importer.")
+                st.success(f"{len({(x['nom'], x['categorie']) for x in prepared})} équipe(s) prête(s) à importer.")
                 st.caption(
-                    "Si Série et Ligne sont vides, l'APK répartit par niveau : "
+                    "Les nageurs et leurs engagements sont facultatifs. Si Série et Ligne sont vides, l'APK répartit par niveau : "
                     "dernière série = plus forte, avec lignes 3-2-4-1-5."
                 )
                 if st.button(
@@ -640,6 +712,33 @@ def render_natation_competition(st, rows, one, exe, date):
                                 item["locked"],
                             ),
                         )
+                        team_row = one(
+                            """SELECT id FROM natation_equipes
+                               WHERE competition_id=? AND nom=? AND categorie=?""",
+                            (comp["id"], item["nom"], item["categorie"]),
+                        )
+                        if team_row and item.get("swimmer"):
+                            sw = item["swimmer"]
+                            exe(
+                                """INSERT INTO natation_nageurs(equipe_id,nom,prenom)
+                                   VALUES(?,?,?)
+                                   ON CONFLICT(equipe_id,nom,prenom) DO NOTHING""",
+                                (team_row["id"], sw["nom"], sw["prenom"]),
+                            )
+                            swimmer_row = one(
+                                """SELECT id FROM natation_nageurs
+                                   WHERE equipe_id=? AND nom=? AND prenom=?""",
+                                (team_row["id"], sw["nom"], sw["prenom"]),
+                            )
+                            if swimmer_row:
+                                for eng in item.get("engagements") or []:
+                                    exe(
+                                        """INSERT INTO natation_engagements(nageur_id,code_epreuve,statut)
+                                           VALUES(?,?,?)
+                                           ON CONFLICT(nageur_id,code_epreuve)
+                                           DO UPDATE SET statut=excluded.statut""",
+                                        (swimmer_row["id"], eng["code"], eng["status"]),
+                                    )
                         touched_categories.add(item["categorie"])
                     for cat in touched_categories:
                         _swim_reflow_category(
@@ -823,6 +922,131 @@ def render_natation_competition(st, rows, one, exe, date):
             )
         else:
             st.info("Crée ou importe les équipes avant le chronométrage.")
+
+        if teams:
+            st.divider()
+            st.markdown("#### 🏊‍♀️ Nageurs de l'équipe")
+            managed_team = st.selectbox(
+                "Équipe à gérer",
+                teams,
+                format_func=lambda t: f"{t['universite']} • {t['nom']} • {t['categorie']}",
+                key="swim_roster_team",
+            )
+            swimmers = rows(
+                """SELECT * FROM natation_nageurs
+                   WHERE equipe_id=? ORDER BY nom,prenom,id""",
+                (managed_team["id"],),
+            )
+            roster_rows = []
+            for sw in swimmers:
+                engs = rows(
+                    """SELECT code_epreuve,statut FROM natation_engagements
+                       WHERE nageur_id=? ORDER BY code_epreuve""",
+                    (sw["id"],),
+                )
+                eng_map = {e["code_epreuve"]: e["statut"] for e in engs}
+                roster_rows.append(
+                    {
+                        "Nom": sw["nom"],
+                        "Prénom": sw["prenom"] or "",
+                        "C1": eng_map.get("C1", ""),
+                        "C2": eng_map.get("C2", ""),
+                        "C3": eng_map.get("C3", ""),
+                        "BONUS": eng_map.get("BONUS", ""),
+                    }
+                )
+            if roster_rows:
+                st.dataframe(roster_rows, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Aucun nageur renseigné pour cette équipe. L'équipe reste engagée.")
+
+            with st.form(f"swim_add_swimmer_{managed_team['id']}"):
+                a1, a2 = st.columns(2)
+                swimmer_nom = a1.text_input("Nom du nageur")
+                swimmer_prenom = a2.text_input("Prénom du nageur")
+                s1, s2, s3 = st.columns(3)
+                status_options = ["Non engagé", "Titulaire", "Remplaçant"]
+                c1_status = s1.selectbox("C1", status_options)
+                c2_status = s2.selectbox("C2", status_options)
+                c3_status = s3.selectbox("C3", status_options)
+                bonus_status = st.checkbox("Engagé au BONUS 12 × 50 m NL")
+                save_swimmer = st.form_submit_button(
+                    "➕ Ajouter / mettre à jour le nageur",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if save_swimmer:
+                if not swimmer_nom.strip() and not swimmer_prenom.strip():
+                    st.error("Renseigne au moins le nom ou le prénom du nageur.")
+                else:
+                    current_entries = []
+                    current = rows(
+                        """SELECT n.id,n.nom,n.prenom,e.code_epreuve,e.statut
+                           FROM natation_nageurs n
+                           LEFT JOIN natation_engagements e ON e.nageur_id=n.id
+                           WHERE n.equipe_id=?""",
+                        (managed_team["id"],),
+                    )
+                    target_key = f"{swimmer_nom.strip()}|{swimmer_prenom.strip()}".strip("|")
+                    for e in current:
+                        if not e.get("code_epreuve"):
+                            continue
+                        existing_key = f"{e['nom']}|{e.get('prenom') or ''}".strip("|")
+                        if existing_key == target_key:
+                            continue
+                        current_entries.append(
+                            {"swimmer": existing_key, "code": e["code_epreuve"], "status": e["statut"]}
+                        )
+                    chosen = []
+                    for code, status in [("C1", c1_status), ("C2", c2_status), ("C3", c3_status)]:
+                        if status != "Non engagé":
+                            chosen.append({"swimmer": target_key, "code": code, "status": status})
+                    if bonus_status:
+                        chosen.append({"swimmer": target_key, "code": "BONUS", "status": "Engagé"})
+                    limit_errors = validate_swimmer_entries(current_entries + chosen)
+                    if limit_errors:
+                        st.error(" • ".join(limit_errors))
+                    else:
+                        exe(
+                            """INSERT INTO natation_nageurs(equipe_id,nom,prenom)
+                               VALUES(?,?,?)
+                               ON CONFLICT(equipe_id,nom,prenom) DO NOTHING""",
+                            (managed_team["id"], swimmer_nom.strip(), swimmer_prenom.strip()),
+                        )
+                        saved = one(
+                            """SELECT id FROM natation_nageurs
+                               WHERE equipe_id=? AND nom=? AND prenom=?""",
+                            (managed_team["id"], swimmer_nom.strip(), swimmer_prenom.strip()),
+                        )
+                        if saved:
+                            exe("DELETE FROM natation_engagements WHERE nageur_id=?", (saved["id"],))
+                            for eng in chosen:
+                                exe(
+                                    """INSERT INTO natation_engagements(nageur_id,code_epreuve,statut)
+                                       VALUES(?,?,?)""",
+                                    (saved["id"], eng["code"], eng["status"]),
+                                )
+                        st.success("Nageur enregistré.")
+                        st.rerun()
+
+            if swimmers:
+                st.markdown("##### 🗑️ Supprimer un nageur")
+                swimmer_to_delete = st.selectbox(
+                    "Nageur",
+                    swimmers,
+                    format_func=lambda s: f"{s['nom']} {s['prenom'] or ''}".strip(),
+                    key=f"swim_delete_swimmer_{managed_team['id']}",
+                )
+                if st.button(
+                    "Supprimer ce nageur",
+                    key=f"swim_delete_swimmer_btn_{managed_team['id']}",
+                    use_container_width=True,
+                ):
+                    exe("DELETE FROM natation_engagements WHERE nageur_id=?", (swimmer_to_delete["id"],))
+                    exe("DELETE FROM natation_nageurs WHERE id=?", (swimmer_to_delete["id"],))
+                    st.success("Nageur supprimé. L'équipe reste engagée.")
+                    st.rerun()
         return
 
     events = rows(
