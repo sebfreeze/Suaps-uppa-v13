@@ -792,7 +792,7 @@ if checkin_token:
 
 # Accès V13 de test
 TEST_ACCESS_CODE = secret_value("TEST_ACCESS_CODE", "").strip()
-TEACHER_ACCESS_CODE = secret_value("TEACHER_ACCESS_CODE", "").strip()
+TEACHER_ACCESS_CODE = secret_value("TEACHER_ACCESS_CODE", "").strip()\nCHRONO_ACCESS_CODE = secret_value("CHRONO_ACCESS_CODE", "").strip()\nCOMPETITION_MANAGER_CODE = secret_value("COMPETITION_MANAGER_CODE", "").strip()
 
 if "test_access_ok" not in st.session_state:
     st.session_state.test_access_ok = not bool(TEST_ACCESS_CODE)
@@ -858,19 +858,29 @@ if st.session_state.quick_page == "inscription":
         st.rerun()
 
     st.stop()
-role_choice = st.sidebar.radio("Mode", ["Étudiant", "Enseignant"], index=0 if st.session_state.role == "Étudiant" else 1)
-if role_choice == "Enseignant" and st.session_state.role != "Enseignant":
-    if TEACHER_ACCESS_CODE:
-        teacher_code = st.sidebar.text_input("Code enseignant", type="password", key="teacher_gate")
-        if st.sidebar.button("Déverrouiller le mode enseignant"):
-            if secrets.compare_digest(teacher_code, TEACHER_ACCESS_CODE):
-                st.session_state.role = "Enseignant"
+role_options = ["Étudiant", "Chronométreur étudiant", "Gestion compétition", "Enseignant"]
+current_role = st.session_state.role if st.session_state.role in role_options else "Étudiant"
+role_choice = st.sidebar.radio("Mode", role_options, index=role_options.index(current_role))
+
+_gate_config = {
+    "Chronométreur étudiant": ("Code chronométreur", CHRONO_ACCESS_CODE, "chrono_gate", "Déverrouiller le chronométrage"),
+    "Gestion compétition": ("Code gestion compétition", COMPETITION_MANAGER_CODE, "competition_manager_gate", "Déverrouiller la gestion compétition"),
+    "Enseignant": ("Code enseignant", TEACHER_ACCESS_CODE, "teacher_gate", "Déverrouiller le mode enseignant"),
+}
+if role_choice in _gate_config and st.session_state.role != role_choice:
+    label, expected_code, gate_key, button_label = _gate_config[role_choice]
+    if expected_code:
+        entered_code = st.sidebar.text_input(label, type="password", key=gate_key)
+        if st.sidebar.button(button_label, key=f"unlock_{gate_key}"):
+            if secrets.compare_digest(entered_code, expected_code):
+                st.session_state.role = role_choice
                 st.rerun()
             else:
-                st.sidebar.error("Code enseignant incorrect.")
+                st.sidebar.error("Code incorrect.")
         st.session_state.role = "Étudiant"
     else:
-        st.session_state.role = "Enseignant"
+        st.sidebar.error("Ce mode n'est pas configuré.")
+        st.session_state.role = "Étudiant"
 elif role_choice == "Étudiant":
     st.session_state.role = "Étudiant"
 
@@ -881,6 +891,8 @@ if st.sidebar.button("Se déconnecter"):
 
 if st.session_state.role == "Étudiant":
     menu = st.sidebar.radio("Navigation", ["Accueil", "Portail étudiant"])
+elif st.session_state.role in {"Chronométreur étudiant", "Gestion compétition"}:
+    menu = st.sidebar.radio("Navigation", ["Accueil", "Compétition"])
 else:
     menu = st.sidebar.radio(
         "Navigation",
