@@ -74,5 +74,14 @@ class SwimImportUtilsTest(unittest.TestCase):
         ]
         self.assertEqual(validate_swimmer_entries(entries), [])
 
+    def test_c2_stroke_limits_two_holders(self):
+        ok = [
+            {"swimmer": "A", "code": "C2-PAP", "status": "Titulaire"},
+            {"swimmer": "B", "code": "C2-PAP", "status": "Titulaire"},
+        ]
+        self.assertEqual(validate_swimmer_entries(ok), [])
+        too_many = ok + [{"swimmer": "C", "code": "C2-PAP", "status": "Titulaire"}]
+        self.assertIn("C2 Papillon : maximum 2 titulaires", validate_swimmer_entries(too_many))
+
 
     unittest.main()
