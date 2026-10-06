@@ -3,6 +3,7 @@ import time as _time
 from io import BytesIO as _BytesIO
 import pandas as pd
 from swim_import_utils import assign_series_lines, parse_level, normalize_swim_status, validate_swimmer_entries
+from competition_access import allowed_swim_tabs
 
 SPORTS_CO = ["Natation", "Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote Basque"]
 
@@ -626,16 +627,20 @@ def _render_swim_timer_display(st, start_epoch, running):
     )
 
 
-def render_natation_competition(st, rows, one, exe, date):
+def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
     comp = _ensure_swim_default_competition(rows, one, exe, date)
     st.markdown("### 🏊 Natation • Compétition par équipes")
     st.caption(
         "5 lignes d'eau • Masculin / Féminin / Mixte • chronomètre + temps intermédiaires + saisie manuelle"
     )
 
+    swim_tabs = allowed_swim_tabs(role)
+    if not swim_tabs:
+        st.error("Accès compétition non autorisé.")
+        return
     tab = st.radio(
         "Natation",
-        ["⏱️ Chronométrage", "👥 Équipes", "📊 Résultats", "🏅 Classements"],
+        swim_tabs,
         horizontal=True,
         key="swim_tab",
     )
@@ -1372,12 +1377,16 @@ def _round_robin(team_ids):
     return games
 
 
-def render_sports_co(st, rows, one, exe, date):
+def render_sports_co(st, rows, one, exe, date, role="Enseignant"):
     st.markdown("### 🏆 Équipes • Matchs • Tournois")
     st.caption("Natation • Rugby • Basket-ball • Handball • Volley-ball • Football • Futsal • Badminton • Pelote Basque")
-    sport = st.selectbox("Sport / activité", SPORTS_CO, key="sc_sport")
+    if role in {"Chronométreur étudiant", "Gestion compétition"}:
+        sport = "Natation"
+        st.info("🏊 Accès limité à la compétition natation.")
+    else:
+        sport = st.selectbox("Sport / activité", SPORTS_CO, key="sc_sport")
     if sport == "Natation":
-        render_natation_competition(st, rows, one, exe, date)
+        render_natation_competition(st, rows, one, exe, date, role=role)
         return
     individuel = sport in ("Badminton", "Pelote Basque")
     participant_label = "joueur / paire" if individuel else "équipe"
