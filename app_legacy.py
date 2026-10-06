@@ -13,6 +13,7 @@ try:
 except Exception:
     psycopg = None
 from datetime import date, datetime, timedelta
+from competition_session import issue_role_token, validate_role_token
 from io import BytesIO
 
 DB = "suaps_presence.db"
@@ -796,6 +797,22 @@ TEACHER_ACCESS_CODE = secret_value("TEACHER_ACCESS_CODE", "").strip()
 CHRONO_ACCESS_CODE = secret_value("CHRONO_ACCESS_CODE", "").strip()
 COMPETITION_MANAGER_CODE = secret_value("COMPETITION_MANAGER_CODE", "").strip()
 
+COMPETITION_SESSION_PARAM = "competition_session"
+_role_secrets = {
+    "Chronométreur étudiant": CHRONO_ACCESS_CODE,
+    "Gestion compétition": COMPETITION_MANAGER_CODE,
+    "Enseignant": TEACHER_ACCESS_CODE,
+}
+_saved_token = st.query_params.get(COMPETITION_SESSION_PARAM)
+_restored_role = validate_role_token(_saved_token, _role_secrets)
+if _restored_role:
+    st.session_state.role = _restored_role
+elif _saved_token:
+    try:
+        del st.query_params[COMPETITION_SESSION_PARAM]
+    except Exception:
+        pass
+
 if "test_access_ok" not in st.session_state:
     st.session_state.test_access_ok = not bool(TEST_ACCESS_CODE)
 if "quick_page" not in st.session_state:
@@ -876,6 +893,7 @@ if role_choice in _gate_config and st.session_state.role != role_choice:
         if st.sidebar.button(button_label, key=f"unlock_{gate_key}"):
             if secrets.compare_digest(entered_code, expected_code):
                 st.session_state.role = role_choice
+                st.query_params[COMPETITION_SESSION_PARAM] = issue_role_token(role_choice, expected_code)
                 st.rerun()
             else:
                 st.sidebar.error("Code incorrect.")
@@ -886,9 +904,13 @@ if role_choice in _gate_config and st.session_state.role != role_choice:
 elif role_choice == "Étudiant":
     st.session_state.role = "Étudiant"
 
-if st.sidebar.button("Se déconnecter"):
+if st.sidebar.button("🚪 Se déconnecter", type="primary", use_container_width=True):
     st.session_state.test_access_ok = not bool(TEST_ACCESS_CODE)
     st.session_state.role = "Étudiant"
+    try:
+        del st.query_params[COMPETITION_SESSION_PARAM]
+    except Exception:
+        pass
     st.rerun()
 
 if st.session_state.role == "Étudiant":
