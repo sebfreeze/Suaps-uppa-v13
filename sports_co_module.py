@@ -1275,9 +1275,15 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
     start_key = key_base + "_start"
     running_key = key_base + "_running"
 
+    relay_count = int(event["nb_splits"] or 0)
+    current_splits = rows(
+        "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+        (result_id,),
+    )
+    next_relay = len(current_splits) + 1
     st.markdown(
         f"#### Série {int(team['serie'] or 1)} • Ligne {team['ligne']} • {team['nom']}  \n"
-        f"**{event['nom']}** • {int(event['nb_splits'] or 0)} temps intermédiaire(s) attendus"
+        f"**{event['nom']}** • {relay_count} relayeur(s)"
     )
 
     _render_swim_timer_display(
@@ -1286,7 +1292,7 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
         st.session_state.get(running_key, False),
     )
 
-    b1, b2, b3 = st.columns(3)
+    b1, b2 = st.columns([1, 2])
     if b1.button("▶️ DÉMARRER", type="primary", use_container_width=True, key=key_base+"_go"):
         st.session_state[start_key] = _time.time()
         st.session_state[running_key] = True
@@ -1297,35 +1303,33 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
         )
         st.rerun()
 
-    if b2.button("⏱️ INTERMÉDIAIRE", use_container_width=True, key=key_base+"_split"):
+    relay_label = (
+        f"🏁 RELAYEUR {next_relay} — TEMPS FINAL"
+        if relay_count and next_relay == relay_count
+        else f"⏱️ RELAYEUR {next_relay}"
+    )
+    relay_disabled = not st.session_state.get(running_key, False) or next_relay > relay_count
+    if b2.button(
+        relay_label,
+        use_container_width=True,
+        type="primary" if relay_count and next_relay == relay_count else "secondary",
+        key=key_base+"_relay",
+        disabled=relay_disabled,
+    ):
         start = st.session_state.get(start_key)
-        if not st.session_state.get(running_key) or not start:
-            st.warning("Démarre le chrono avant d'enregistrer un intermédiaire.")
-        else:
-            current_splits = rows(
-                "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
-                (result_id,),
-            )
-            if len(current_splits) >= int(event["nb_splits"] or 0):
-                st.warning("Tous les temps intermédiaires prévus sont déjà enregistrés.")
-            else:
-                elapsed = _time.time() - float(start)
-                _save_swim_split(rows, exe, result_id, elapsed, "Chrono")
-                st.rerun()
-
-    if b3.button("⏹️ FINAL", use_container_width=True, key=key_base+"_stop"):
-        start = st.session_state.get(start_key)
-        if not st.session_state.get(running_key) or not start:
-            st.warning("Démarre le chrono avant l'arrêt final.")
+        if not start:
+            st.warning("Démarre le chrono avant d'enregistrer un relayeur.")
         else:
             elapsed = _time.time() - float(start)
-            exe(
-                """UPDATE natation_resultats
-                   SET temps_final=?,mode_saisie='Chrono',statut='Terminé'
-                   WHERE id=?""",
-                (float(elapsed), result_id),
-            )
-            st.session_state[running_key] = False
+            _save_swim_split(rows, exe, result_id, elapsed, "Chrono")
+            if next_relay == relay_count:
+                exe(
+                    """UPDATE natation_resultats
+                       SET temps_final=?,mode_saisie='Chrono',statut='Terminé'
+                       WHERE id=?""",
+                    (float(elapsed), result_id),
+                )
+                st.session_state[running_key] = False
             st.rerun()
 
     splits = rows(
@@ -1333,11 +1337,11 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
         (result_id,),
     )
     if splits:
-        st.markdown("**Temps intermédiaires enregistrés**")
+        st.markdown("**Temps des relayeurs enregistrés**")
         st.dataframe(
             [
                 {
-                    "#": s["numero"],
+                    "Relayeur": f"Relayeur {s['numero']}",
                     "Temps du relayeur": _swim_fmt(s["temps_split"]),
                     "Cumul": _swim_fmt(s["temps_cumule"]),
                     "Source": s["source"],
