@@ -792,7 +792,9 @@ if checkin_token:
 
 # Accès V13 de test
 TEST_ACCESS_CODE = secret_value("TEST_ACCESS_CODE", "").strip()
-TEACHER_ACCESS_CODE = secret_value("TEACHER_ACCESS_CODE", "").strip()\nCHRONO_ACCESS_CODE = secret_value("CHRONO_ACCESS_CODE", "").strip()\nCOMPETITION_MANAGER_CODE = secret_value("COMPETITION_MANAGER_CODE", "").strip()
+TEACHER_ACCESS_CODE = secret_value("TEACHER_ACCESS_CODE", "").strip()
+CHRONO_ACCESS_CODE = secret_value("CHRONO_ACCESS_CODE", "").strip()
+COMPETITION_MANAGER_CODE = secret_value("COMPETITION_MANAGER_CODE", "").strip()
 
 if "test_access_ok" not in st.session_state:
     st.session_state.test_access_ok = not bool(TEST_ACCESS_CODE)
