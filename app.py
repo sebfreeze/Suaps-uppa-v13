@@ -178,6 +178,7 @@ def _render_competition():
         _competition_one,
         _competition_exec,
         date,
+        role=st.session_state.get("role", "Étudiant"),
     )
 
 
@@ -401,10 +402,10 @@ elif globals().get("menu") == WORKBOOK_MENU_LABEL:
     else:
         st.error("Cette page est réservée aux enseignants.")
 elif globals().get("menu") == COMPETITION_MENU_LABEL:
-    if st.session_state.get("role") == "Enseignant":
+    if st.session_state.get("role") in {"Enseignant", "Chronométreur étudiant", "Gestion compétition"}:
         _render_competition()
     else:
-        st.error("Cette page est réservée aux enseignants.")
+        st.error("Cette page nécessite un accès compétition.")
 elif globals().get("menu") == COMBINED_MENU_LABEL:
     if st.session_state.get("role") == "Enseignant":
         _render_presence_note_evaluation()
