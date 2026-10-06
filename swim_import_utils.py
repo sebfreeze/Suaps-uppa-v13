@@ -115,28 +115,45 @@ def normalize_swim_status(value, bonus=False):
 def validate_swimmer_entries(entries):
     """Contrôle les plafonds d'effectif sans exiger un effectif complet."""
     errors = []
-    holders = {"C1": set(), "C2": set(), "C3": set()}
-    replacements = {"C1": set(), "C2": set(), "C3": set()}
+    limits = {
+        "C1": 8,
+        "C2-PAP": 2,
+        "C2-DOS": 2,
+        "C2-BR": 2,
+        "C2-NL": 2,
+        "C3": 8,
+    }
+    holders = {code: set() for code in limits}
+    replacements = {code: set() for code in limits}
     bonus = set()
+
     for item in entries:
         swimmer = str(item.get("swimmer") or "").strip()
         code = str(item.get("code") or "").upper()
         status = item.get("status")
         if not swimmer or not status:
             continue
-        block = "C2" if code.startswith("C2") else code
-        if block in holders:
+        if code in limits:
             if status == "Remplaçant":
-                replacements[block].add(swimmer)
+                replacements[code].add(swimmer)
             elif status == "Titulaire":
-                holders[block].add(swimmer)
+                holders[code].add(swimmer)
         elif code == "BONUS" and status == "Engagé":
             bonus.add(swimmer)
-    for block in ("C1", "C2", "C3"):
-        if len(holders[block]) > 8:
-            errors.append(f"{block} : maximum 8 titulaires")
-        if len(replacements[block]) > 1:
-            errors.append(f"{block} : maximum 1 remplaçant")
+
+    labels = {
+        "C1": "C1",
+        "C2-PAP": "C2 Papillon",
+        "C2-DOS": "C2 Dos",
+        "C2-BR": "C2 Brasse",
+        "C2-NL": "C2 Crawl",
+        "C3": "C3",
+    }
+    for code, maximum in limits.items():
+        if len(holders[code]) > maximum:
+            errors.append(f"{labels[code]} : maximum {maximum} titulaires")
+        if len(replacements[code]) > 1:
+            errors.append(f"{labels[code]} : maximum 1 remplaçant")
     if len(bonus) > 12:
         errors.append("BONUS : maximum 12 nageurs")
     return errors
