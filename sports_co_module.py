@@ -223,10 +223,18 @@ def _swim_reflow_category(rows, exe, competition_id, categorie, max_lines=5, unl
     payload = []
     for t in teams:
         locked = int(t.get("placement_verrouille") or 0)
+        universite_norm = str(t.get("universite") or "").strip().lower()
+        preferred_line = (
+            3 if "uppa" in universite_norm
+            else 2 if "toulouse" in universite_norm
+            else 4 if "bordeaux" in universite_norm
+            else None
+        )
         payload.append(
             {
                 "team": str(t["id"]),
                 "level": t.get("niveau"),
+                "preferred_line": preferred_line,
                 "series": None if (unlock_all or not locked) else t.get("serie"),
                 "line": None if (unlock_all or not locked) else t.get("ligne"),
             }
@@ -368,6 +376,9 @@ def _swim_prepare_import(df):
         niveau = parse_level(r.get("niveau"))
         if not universite or not nom or not categorie:
             errors.append(f"Ligne {idx + 2}")
+            continue
+        if niveau not in (1.0, 2.0):
+            errors.append(f"Ligne {idx + 2} : niveau obligatoire 1 ou 2")
             continue
 
         def _opt_int(v):
@@ -790,7 +801,7 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
                     int(comp["nb_lignes"] or 5),
                     unlock_all=True,
                 )
-            st.success("Séries recalculées : la dernière série contient les plus forts.")
+            st.success("Séries recalculées : niveau 2 dans les séries les plus fortes, avec priorités de lignes UPPA 3 / Toulouse 2 / Bordeaux 4.")
             st.rerun()
 
         st.divider()
@@ -808,12 +819,11 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
             )
             c3, c4 = st.columns(2)
             nom = c3.text_input("Nom de l'équipe", placeholder="Ex. Limoges Mixte 1")
-            niveau = c4.number_input(
+            niveau = c4.selectbox(
                 "Niveau",
-                min_value=0.0,
-                value=1.0,
-                step=0.5,
-                help="Plus la valeur est élevée, plus l'équipe est forte.",
+                [1, 2],
+                index=0,
+                help="Niveau 2 = plus fort que niveau 1.",
             )
             assignment = st.radio(
                 "Placement",
