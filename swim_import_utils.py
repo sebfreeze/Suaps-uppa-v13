@@ -96,3 +96,47 @@ def assign_series_lines(rows, max_lines=5):
         output[index]["line"] = line
 
     return output
+
+
+def normalize_swim_status(value, bonus=False):
+    """Normalise les statuts d'engagement importés depuis Excel/CSV."""
+    text = str(value or "").strip().lower()
+    if not text or text in {"0", "non", "n", "-", "none", "nan"}:
+        return None
+    if bonus:
+        return "Engagé" if text in {"1", "x", "oui", "o", "engage", "engagé", "titulaire", "t"} else None
+    if text in {"r", "remplacant", "remplaçant", "remplacement"}:
+        return "Remplaçant"
+    if text in {"1", "x", "oui", "o", "t", "titulaire", "engage", "engagé"}:
+        return "Titulaire"
+    return None
+
+
+def validate_swimmer_entries(entries):
+    """Contrôle les plafonds d'effectif sans exiger un effectif complet."""
+    errors = []
+    holders = {"C1": set(), "C2": set(), "C3": set()}
+    replacements = {"C1": set(), "C2": set(), "C3": set()}
+    bonus = set()
+    for item in entries:
+        swimmer = str(item.get("swimmer") or "").strip()
+        code = str(item.get("code") or "").upper()
+        status = item.get("status")
+        if not swimmer or not status:
+            continue
+        block = "C2" if code.startswith("C2") else code
+        if block in holders:
+            if status == "Remplaçant":
+                replacements[block].add(swimmer)
+            elif status == "Titulaire":
+                holders[block].add(swimmer)
+        elif code == "BONUS" and status == "Engagé":
+            bonus.add(swimmer)
+    for block in ("C1", "C2", "C3"):
+        if len(holders[block]) > 8:
+            errors.append(f"{block} : maximum 8 titulaires")
+        if len(replacements[block]) > 1:
+            errors.append(f"{block} : maximum 1 remplaçant")
+    if len(bonus) > 12:
+        errors.append("BONUS : maximum 12 nageurs")
+    return errors
