@@ -268,7 +268,10 @@ def _swim_import_model_bytes():
                 "Nom nageur": "Dupont",
                 "Prénom nageur": "Léa",
                 "C1": "Titulaire",
-                "C2": "Titulaire",
+                "C2 Pap": "Titulaire",
+                "C2 Dos": "",
+                "C2 Brasse": "",
+                "C2 Crawl": "",
                 "C3": "Titulaire",
                 "BONUS": "Engagé",
             },
@@ -276,13 +279,16 @@ def _swim_import_model_bytes():
                 "Université / AS": "Toulouse",
                 "Nom équipe": "Toulouse Mixte 1",
                 "Catégorie": "Mixte",
-                "Niveau": 3,
+                "Niveau": 1,
                 "Série": 2,
                 "Ligne": 3,
                 "Nom nageur": "",
                 "Prénom nageur": "",
                 "C1": "",
-                "C2": "",
+                "C2 Pap": "",
+                "C2 Dos": "",
+                "C2 Brasse": "",
+                "C2 Crawl": "",
                 "C3": "",
                 "BONUS": "",
             },
@@ -321,7 +327,17 @@ def _swim_prepare_import(df):
         "nageur prénom": "nageur_prenom",
         "nageur prenom": "nageur_prenom",
         "c1": "eng_c1",
-        "c2": "eng_c2",
+        "c2 pap": "eng_c2_pap",
+        "c2-pap": "eng_c2_pap",
+        "c2 papillon": "eng_c2_pap",
+        "c2 dos": "eng_c2_dos",
+        "c2-dos": "eng_c2_dos",
+        "c2 brasse": "eng_c2_br",
+        "c2-br": "eng_c2_br",
+        "c2 crawl": "eng_c2_nl",
+        "c2-cr": "eng_c2_nl",
+        "c2 nl": "eng_c2_nl",
+        "c2-nl": "eng_c2_nl",
         "c3": "eng_c3",
         "bonus": "eng_bonus",
     }
@@ -339,7 +355,7 @@ def _swim_prepare_import(df):
         work["serie"] = None
     if "ligne" not in work.columns:
         work["ligne"] = None
-    for col in ["nageur_nom", "nageur_prenom", "eng_c1", "eng_c2", "eng_c3", "eng_bonus"]:
+    for col in ["nageur_nom", "nageur_prenom", "eng_c1", "eng_c2_pap", "eng_c2_dos", "eng_c2_br", "eng_c2_nl", "eng_c3", "eng_bonus"]:
         if col not in work.columns:
             work[col] = None
 
@@ -378,7 +394,10 @@ def _swim_prepare_import(df):
             swimmer_key = f"{nageur_nom}|{nageur_prenom}".strip("|")
             for code, col, bonus in [
                 ("C1", "eng_c1", False),
-                ("C2", "eng_c2", False),
+                ("C2-PAP", "eng_c2_pap", False),
+                ("C2-DOS", "eng_c2_dos", False),
+                ("C2-BR", "eng_c2_br", False),
+                ("C2-NL", "eng_c2_nl", False),
                 ("C3", "eng_c3", False),
                 ("BONUS", "eng_bonus", True),
             ]:
@@ -955,7 +974,10 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
                         "Nom": sw["nom"],
                         "Prénom": sw["prenom"] or "",
                         "C1": eng_map.get("C1", ""),
-                        "C2": eng_map.get("C2", ""),
+                        "C2 Pap": eng_map.get("C2-PAP", ""),
+                        "C2 Dos": eng_map.get("C2-DOS", ""),
+                        "C2 Brasse": eng_map.get("C2-BR", ""),
+                        "C2 Crawl": eng_map.get("C2-NL", ""),
                         "C3": eng_map.get("C3", ""),
                         "BONUS": eng_map.get("BONUS", ""),
                     }
@@ -969,12 +991,18 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
                 a1, a2 = st.columns(2)
                 swimmer_nom = a1.text_input("Nom du nageur")
                 swimmer_prenom = a2.text_input("Prénom du nageur")
-                s1, s2, s3 = st.columns(3)
                 status_options = ["Non engagé", "Titulaire", "Remplaçant"]
+                s1, s2, s3 = st.columns(3)
                 c1_status = s1.selectbox("C1", status_options)
-                c2_status = s2.selectbox("C2", status_options)
-                c3_status = s3.selectbox("C3", status_options)
-                bonus_status = st.checkbox("Engagé au BONUS 12 × 50 m NL")
+                c3_status = s2.selectbox("C3", status_options)
+                bonus_status = s3.checkbox("BONUS 12 × 50 m NL")
+                st.caption("C2 : 2 nageurs maximum par nage")
+                c21, c22 = st.columns(2)
+                c2_pap_status = c21.selectbox("C2 Papillon", status_options)
+                c2_dos_status = c22.selectbox("C2 Dos", status_options)
+                c23, c24 = st.columns(2)
+                c2_br_status = c23.selectbox("C2 Brasse", status_options)
+                c2_nl_status = c24.selectbox("C2 Crawl", status_options)
                 save_swimmer = st.form_submit_button(
                     "➕ Ajouter / mettre à jour le nageur",
                     type="primary",
@@ -1004,7 +1032,14 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
                             {"swimmer": existing_key, "code": e["code_epreuve"], "status": e["statut"]}
                         )
                     chosen = []
-                    for code, status in [("C1", c1_status), ("C2", c2_status), ("C3", c3_status)]:
+                    for code, status in [
+                        ("C1", c1_status),
+                        ("C2-PAP", c2_pap_status),
+                        ("C2-DOS", c2_dos_status),
+                        ("C2-BR", c2_br_status),
+                        ("C2-NL", c2_nl_status),
+                        ("C3", c3_status),
+                    ]:
                         if status != "Non engagé":
                             chosen.append({"swimmer": target_key, "code": code, "status": status})
                     if bonus_status:
