@@ -1,5 +1,5 @@
 import unittest
-from swim_import_utils import assign_series_lines
+from swim_import_utils import assign_series_lines, normalize_swim_status, validate_swimmer_entries
 
 class SwimImportUtilsTest(unittest.TestCase):
     def test_last_series_gets_strongest_and_partial_first_series_is_centered(self):
@@ -46,5 +46,33 @@ class SwimImportUtilsTest(unittest.TestCase):
         by_team = {r["team"]: r for r in out}
         self.assertEqual((by_team["Equipe A"]["series"], by_team["Equipe A"]["line"]), (4,3))
 
-if __name__ == "__main__":
+    def test_swimmer_status_aliases(self):
+        self.assertEqual(normalize_swim_status("titulaire"), "Titulaire")
+        self.assertEqual(normalize_swim_status("R"), "Remplaçant")
+        self.assertEqual(normalize_swim_status("x", bonus=True), "Engagé")
+        self.assertIsNone(normalize_swim_status(""))
+
+    def test_swimmer_limits_allow_incomplete_team(self):
+        entries = [
+            {"swimmer": f"N{i}", "code": "C1", "status": "Titulaire"}
+            for i in range(8)
+        ]
+        entries.append({"swimmer": "R1", "code": "C1", "status": "Remplaçant"})
+        self.assertEqual(validate_swimmer_entries(entries), [])
+
+    def test_swimmer_limits_reject_ninth_holder(self):
+        entries = [
+            {"swimmer": f"N{i}", "code": "C3", "status": "Titulaire"}
+            for i in range(9)
+        ]
+        self.assertTrue(validate_swimmer_entries(entries))
+
+    def test_bonus_accepts_twelve_swimmers(self):
+        entries = [
+            {"swimmer": f"N{i}", "code": "BONUS", "status": "Engagé"}
+            for i in range(12)
+        ]
+        self.assertEqual(validate_swimmer_entries(entries), [])
+
+
     unittest.main()
