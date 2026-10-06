@@ -95,6 +95,33 @@ def assign_series_lines(rows, max_lines=5):
         output[index]["series"] = series
         output[index]["line"] = line
 
+    # Respect preferred lanes inside each automatically seeded series by swapping
+    # only automatically placed teams. This keeps the strength-based series intact.
+    locked_indexes = {
+        index for index, row in enumerate(rows)
+        if _as_positive_int(row.get("series")) and _as_positive_int(row.get("line"))
+    }
+    for series in sorted({row.get("series") for row in output if row.get("series")}):
+        series_indexes = [
+            i for i, row in enumerate(output)
+            if row.get("series") == series and i not in locked_indexes
+        ]
+        for i in series_indexes:
+            preferred = _as_positive_int(output[i].get("preferred_line"))
+            if not preferred or preferred > max_lines or output[i].get("line") == preferred:
+                continue
+            occupant = next(
+                (j for j in series_indexes if output[j].get("line") == preferred),
+                None,
+            )
+            if occupant is None:
+                output[i]["line"] = preferred
+            else:
+                output[i]["line"], output[occupant]["line"] = (
+                    output[occupant]["line"],
+                    output[i]["line"],
+                )
+
     return output
 
 
