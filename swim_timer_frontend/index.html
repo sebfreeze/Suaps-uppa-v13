@@ -116,9 +116,11 @@
           startEpochMs = incomingStart;
           baseSeconds = Math.max(0, (Date.now() - startEpochMs) / 1000);
           startPerfMs = performance.now();
-        } else if (!incomingRunning && running && args.final_seconds != null) {
-          stoppedSeconds = Number(args.final_seconds);
+        } else if (!incomingRunning && running) {
+          // Fin de course, saisie manuelle ou réinitialisation côté serveur.
+          stoppedSeconds = Number(args.final_seconds || 0);
           running = false;
+          if (args.final_seconds == null) countedSplits = Number(args.split_count || 0);
         } else if (!incomingRunning && !running) {
           stoppedSeconds = Number(args.final_seconds || 0);
           if (Number(args.split_count || 0) === 0) countedSplits = 0;
