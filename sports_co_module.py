@@ -8,6 +8,17 @@ from competition_access import allowed_swim_tabs
 SPORTS_CO = ["Natation", "Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote Basque"]
 
 
+def _match_score_or_none(value):
+    """Normalise un score DB ; les champs vides peuvent devenir NaN via pandas."""
+    try:
+        if pd.isna(value):
+            return None
+        score = int(value)
+        return score if score >= 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def init_sports_co_db(exe):
     exe("CREATE TABLE IF NOT EXISTS equipes(id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT NOT NULL, activite TEXT NOT NULL, couleur TEXT, capitaine_id INTEGER, date_creation TEXT, photo BLOB)")
     exe("CREATE TABLE IF NOT EXISTS equipe_joueurs(id INTEGER PRIMARY KEY AUTOINCREMENT, equipe_id INTEGER NOT NULL, utilisateur_id INTEGER NOT NULL, numero TEXT, poste TEXT, titulaire INTEGER DEFAULT 1, photo BLOB, UNIQUE(equipe_id,utilisateur_id))")
@@ -1570,22 +1581,24 @@ def render_sports_co(st, rows, one, exe, date, role="Enseignant"):
         teams = rows("SELECT e.* FROM tournoi_equipes te JOIN equipes e ON e.id=te.equipe_id WHERE te.tournoi_id=?", (t["id"],))
         stats = {e["id"]: {"Équipe": e["nom"], "J": 0, "G": 0, "N": 0, "P": 0, "Pour": 0, "Contre": 0, "Pts": 0} for e in teams}
         for m in rows("SELECT * FROM matchs WHERE tournoi_id=? AND statut='Terminé'", (t["id"],)):
-            if m["score_a"] is None or m["score_b"] is None:
+            score_a = _match_score_or_none(m["score_a"])
+            score_b = _match_score_or_none(m["score_b"])
+            if score_a is None or score_b is None:
                 continue
             a, b = stats.get(m["equipe_a_id"]), stats.get(m["equipe_b_id"])
             if not a or not b:
                 continue
             a["J"] += 1
             b["J"] += 1
-            a["Pour"] += m["score_a"]
-            a["Contre"] += m["score_b"]
-            b["Pour"] += m["score_b"]
-            b["Contre"] += m["score_a"]
-            if m["score_a"] > m["score_b"]:
+            a["Pour"] += score_a
+            a["Contre"] += score_b
+            b["Pour"] += score_b
+            b["Contre"] += score_a
+            if score_a > score_b:
                 a["G"] += 1
                 b["P"] += 1
                 a["Pts"] += 3
-            elif m["score_b"] > m["score_a"]:
+            elif score_b > score_a:
                 b["G"] += 1
                 a["P"] += 1
                 b["Pts"] += 3
@@ -1626,7 +1639,10 @@ def render_sports_co(st, rows, one, exe, date, role="Enseignant"):
             else:
                 st.warning(f"Il faut au moins 2 {participant_label}s pour créer un match {sport}.")
             for m in matches:
-                st.write(f"**{m['equipe_a']} {'—' if m['score_a'] is None else str(m['score_a']) + ' - ' + str(m['score_b'])} {m['equipe_b']}** • {m['date_match']} • {m.get('phase') or ''}")
+                score_a = _match_score_or_none(m["score_a"])
+                score_b = _match_score_or_none(m["score_b"])
+                score_label = "—" if score_a is None or score_b is None else f"{score_a} - {score_b}"
+                st.write(f"**{m['equipe_a']} {score_label} {m['equipe_b']}** • {m['date_match']} • {m.get('phase') or ''}")
             return
         if not matches:
             st.info("Aucun match.")
@@ -1648,8 +1664,8 @@ def render_sports_co(st, rows, one, exe, date, role="Enseignant"):
         current_status = m.get("statut") or "Prévu"
         with st.form("sc_score"):
             c1, c2 = st.columns(2)
-            sa = c1.number_input(f"Score {m['equipe_a']}", 0, value=int(m['score_a'] or 0))
-            sb = c2.number_input(f"Score {m['equipe_b']}", 0, value=int(m['score_b'] or 0))
+            sa = c1.number_input(f"Score {m['equipe_a']}", min_value=0, value=_match_score_or_none(m["score_a"]) or 0)
+            sb = c2.number_input(f"Score {m['equipe_b']}", min_value=0, value=_match_score_or_none(m["score_b"]) or 0)
             statut = st.selectbox("Statut", statuses, index=statuses.index(current_status) if current_status in statuses else 0)
             obs = st.text_area("Observations / détail des sets", m["observations"] or "")
             save = st.form_submit_button("Enregistrer la feuille de match", type="primary")
