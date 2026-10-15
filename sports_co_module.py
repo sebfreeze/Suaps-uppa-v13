@@ -1468,7 +1468,31 @@ def render_sports_co(st, rows, one, exe, date, role="Enseignant"):
             st.info("Crée d'abord une équipe, un joueur ou une paire.")
             return
         team = st.selectbox("Équipe / joueur / paire", teams, format_func=lambda r: r["nom"], key="sc_team_pick")
-        students = rows("SELECT * FROM utilisateurs WHERE profil='Étudiant' AND actif=1 ORDER BY nom,prenom")
+        # Les joueurs proposés proviennent du créneau SUAPS de l'activité.
+        # Le choix explicite du créneau évite de mélanger les différents groupes.
+        offres = rows(
+            "SELECT id,intitule,groupe,jour_horaire FROM offres_inscription "
+            "WHERE activite=? ORDER BY intitule,id",
+            (sport,),
+        )
+        if not offres:
+            st.warning("Aucun créneau d'inscription SUAPS pour cette activité.")
+            return
+        offre = st.selectbox(
+            "Créneau SUAPS : liste des inscrits",
+            offres,
+            format_func=lambda o: f"{o['intitule']} — {o.get('groupe') or 'Tous'} "
+                                  f"({o.get('jour_horaire') or 'horaire non renseigné'})",
+            key=f"sc_offre_{sport}",
+        )
+        students = rows(
+            "SELECT DISTINCT e.* FROM etudiants e "
+            "JOIN inscriptions i ON i.etudiant_id=e.id "
+            "WHERE i.offre_id=? AND e.actif=1 AND i.statut='Inscrit' "
+            "ORDER BY e.nom,e.prenom",
+            (offre["id"],),
+        )
+        st.caption(f"{len(students)} inscrit(s) au créneau sélectionné.")
         current = rows("SELECT ej.*,u.nom,u.prenom FROM equipe_joueurs ej JOIN utilisateurs u ON u.id=ej.utilisateur_id WHERE ej.equipe_id=? ORDER BY ej.titulaire DESC,u.nom", (team["id"],))
         ids = {p["utilisateur_id"] for p in current}
         choices = [s for s in students if s["id"] not in ids]
