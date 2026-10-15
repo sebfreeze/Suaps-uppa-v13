@@ -656,16 +656,69 @@ def _swim_export_excel(all_tables):
     return output.getvalue()
 
 
-def _render_swim_timer_display(st, start_epoch, running):
-    if not running or not start_epoch:
+def _apply_swim_timer_action(st, event, key_base, result_id, relay_count, rows, exe):
+    """Traite un clic chronométré côté téléphone, sans compter la latence réseau."""
+    import math as _math
+
+    if not isinstance(event, dict) or event.get("result_id") != result_id:
         return
-    elapsed = max(0.0, _time.time() - float(start_epoch))
-    # Affichage serveur simple ; les actions enregistrent toujours le temps exact au clic.
-    st.markdown(
-        f"<div style='font-size:2.2rem;font-weight:800;text-align:center;padding:.35rem 0'>"
-        f"⏱️ {_swim_fmt(elapsed)}</div>",
-        unsafe_allow_html=True,
-    )
+    event_id = str(event.get("event_id") or "")
+    last_key = key_base + "_last_event"
+    if not event_id or event_id == st.session_state.get(last_key):
+        return
+
+    start_key = key_base + "_start"
+    running_key = key_base + "_running"
+    action = event.get("action")
+    changed = False
+
+    if action == "start":
+        try:
+            start_epoch = float(event["start_epoch"])
+        except (TypeError, ValueError, KeyError):
+            return
+        if not _math.isfinite(start_epoch) or start_epoch <= 0:
+            return
+        st.session_state[start_key] = start_epoch
+        st.session_state[running_key] = True
+        exe("DELETE FROM natation_splits WHERE resultat_id=?", (result_id,))
+        exe(
+            "UPDATE natation_resultats SET temps_final=NULL,mode_saisie='Chrono',statut='En cours' WHERE id=?",
+            (result_id,),
+        )
+        changed = True
+
+    elif action == "split" and st.session_state.get(running_key, False):
+        try:
+            elapsed = float(event["elapsed_seconds"])
+            requested_number = int(event["split_number"])
+        except (TypeError, ValueError, KeyError):
+            return
+        existing = rows(
+            "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+            (result_id,),
+        )
+        next_number = len(existing) + 1
+        previous = float(existing[-1]["temps_cumule"]) if existing else 0.0
+        if not (
+            _math.isfinite(elapsed) and elapsed > previous and
+            requested_number == next_number and 1 <= next_number <= relay_count
+        ):
+            return
+        _save_swim_split(rows, exe, result_id, elapsed, "Chrono téléphone")
+        if next_number == relay_count:
+            exe(
+                """UPDATE natation_resultats
+                   SET temps_final=?,mode_saisie='Chrono',statut='Terminé'
+                   WHERE id=?""",
+                (elapsed, result_id),
+            )
+            st.session_state[running_key] = False
+        changed = True
+
+    st.session_state[last_key] = event_id
+    if changed:
+        st.rerun()
 
 
 def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
@@ -1307,51 +1360,24 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
         f"**{event['nom']}** • {relay_count} relayeur(s)"
     )
 
-    _render_swim_timer_display(
-        st,
-        st.session_state.get(start_key),
-        st.session_state.get(running_key, False),
-    )
+    # Le chronomètre et ses boutons tournent côté appareil : un clic capture
+    # immédiatement le temps, même si le serveur Render met du temps à répondre.
+    from swim_timer_component import render_swim_timer
 
-    b1, b2 = st.columns([1, 2])
-    if b1.button("▶️ DÉMARRER", type="primary", use_container_width=True, key=key_base+"_go"):
-        st.session_state[start_key] = _time.time()
-        st.session_state[running_key] = True
-        exe("DELETE FROM natation_splits WHERE resultat_id=?", (result_id,))
-        exe(
-            "UPDATE natation_resultats SET temps_final=NULL,mode_saisie='Chrono',statut='En cours' WHERE id=?",
-            (result_id,),
-        )
-        st.rerun()
-
-    relay_label = (
-        f"🏁 RELAYEUR {next_relay} — TEMPS FINAL"
-        if relay_count and next_relay == relay_count
-        else f"⏱️ RELAYEUR {next_relay}"
+    saved_before = one("SELECT * FROM natation_resultats WHERE id=?", (result_id,))
+    timer_event = render_swim_timer(
+        result_id=result_id,
+        running=st.session_state.get(running_key, False),
+        start_epoch=st.session_state.get(start_key),
+        split_count=len(current_splits),
+        relay_count=relay_count,
+        final_seconds=saved_before["temps_final"] if saved_before else None,
+        key=key_base + "_live",
     )
-    relay_disabled = not st.session_state.get(running_key, False) or next_relay > relay_count
-    if b2.button(
-        relay_label,
-        use_container_width=True,
-        type="primary" if relay_count and next_relay == relay_count else "secondary",
-        key=key_base+"_relay",
-        disabled=relay_disabled,
-    ):
-        start = st.session_state.get(start_key)
-        if not start:
-            st.warning("Démarre le chrono avant d'enregistrer un relayeur.")
-        else:
-            elapsed = _time.time() - float(start)
-            _save_swim_split(rows, exe, result_id, elapsed, "Chrono")
-            if next_relay == relay_count:
-                exe(
-                    """UPDATE natation_resultats
-                       SET temps_final=?,mode_saisie='Chrono',statut='Terminé'
-                       WHERE id=?""",
-                    (float(elapsed), result_id),
-                )
-                st.session_state[running_key] = False
-            st.rerun()
+    _apply_swim_timer_action(
+        st, timer_event, key_base, result_id, relay_count, rows, exe
+    )
+    st.caption("Le temps est mesuré au toucher sur le téléphone ; l'enregistrement se fait ensuite dans l'application.")
 
     splits = rows(
         "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
