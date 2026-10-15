@@ -22,6 +22,7 @@
     #go { background: #22c55e; color: #052814; flex: .9; }
     #split { background: #eaf3ff; color: #123354; flex: 1.6; }
     #split.final { background: #fbbf24; color: #3d2300; }
+    #stop { background: #f97373; color: #401010; margin-top: 10px; width: 100%; }
     #last { margin: 10px 0 1px; min-height: 18px; font-size: 13px; color: #c9e4f8; }
   </style>
 </head>
@@ -34,6 +35,7 @@
       <button id="go" type="button">▶ DÉPART</button>
       <button id="split" type="button" disabled>⏱ PASSAGE</button>
     </div>
+    <button id="stop" type="button" disabled>🏁 ARRÊTER / TEMPS FINAL</button>
     <div id="last" aria-live="polite">Les temps sont enregistrés au toucher du bouton.</div>
   </div>
   <script>
@@ -42,6 +44,7 @@
     const status = document.getElementById("status");
     const go = document.getElementById("go");
     const split = document.getElementById("split");
+    const stop = document.getElementById("stop");
     const last = document.getElementById("last");
     let resultId = null;
     let relayCount = 0;
@@ -51,6 +54,10 @@
     let startPerfMs = 0;
     let baseSeconds = 0;
     let stoppedSeconds = 0;
+    // Un ancien rendu du serveur ne doit jamais redémarrer un chrono arrêté
+    // localement pendant que le résultat final est en cours d'enregistrement.
+    let localFinalized = false;
+    let pendingFinal = false;
 
     function send(type, data) {
       window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, data || {}), "*");
@@ -77,14 +84,16 @@
              String(remainder % 100).padStart(2, "0");
     }
     function refreshButtons() {
-      go.disabled = running;
+      go.disabled = running || localFinalized;
       split.disabled = !running || countedSplits >= relayCount;
+      stop.disabled = !running;
       split.classList.toggle("final", relayCount > 0 && countedSplits === relayCount - 1);
       split.textContent = relayCount > 0 && countedSplits === relayCount - 1
         ? "🏁 ARRIVÉE / TEMPS FINAL"
         : "⏱ RELAYEUR " + (countedSplits + 1) + " / " + relayCount;
       status.textContent = running
         ? "En cours • " + countedSplits + " / " + relayCount + " passage(s)"
+        : pendingFinal ? "Chrono arrêté • enregistrement du temps final…"
         : (stoppedSeconds > 0 ? "Terminé • temps enregistré" : "Prêt au départ");
     }
     function tick() {
@@ -103,6 +112,8 @@
         countedSplits = Number(args.split_count || 0);
         stoppedSeconds = Number(args.final_seconds || 0);
         running = incomingRunning;
+        localFinalized = !incomingRunning && stoppedSeconds > 0;
+        pendingFinal = false;
         startEpochMs = incomingStart;
         if (running) {
           baseSeconds = Math.max(0, (Date.now() - startEpochMs) / 1000);
@@ -111,19 +122,30 @@
         last.textContent = "Un passage = un temps intermédiaire, sans arrêter le chrono.";
       } else {
         countedSplits = Math.max(countedSplits, Number(args.split_count || 0));
-        if (incomingRunning && !running) {
+        if (incomingRunning && !running && !localFinalized) {
           running = true;
           startEpochMs = incomingStart;
           baseSeconds = Math.max(0, (Date.now() - startEpochMs) / 1000);
           startPerfMs = performance.now();
         } else if (!incomingRunning && running) {
-          // Fin de course, saisie manuelle ou réinitialisation côté serveur.
+          // Arrêt ou saisie manuelle reçu du serveur.
           stoppedSeconds = Number(args.final_seconds || 0);
           running = false;
+          localFinalized = stoppedSeconds > 0;
+          pendingFinal = false;
           if (args.final_seconds == null) countedSplits = Number(args.split_count || 0);
         } else if (!incomingRunning && !running) {
-          stoppedSeconds = Number(args.final_seconds || 0);
-          if (Number(args.split_count || 0) === 0) countedSplits = 0;
+          if (Number(args.final_seconds || 0) > 0) {
+            stoppedSeconds = Number(args.final_seconds);
+            localFinalized = true;
+            pendingFinal = false;
+            last.textContent = "Temps final confirmé et enregistré.";
+          } else if (!pendingFinal && Number(args.split_count || 0) === 0) {
+            // Remise à zéro volontaire dans l'application.
+            stoppedSeconds = 0;
+            localFinalized = false;
+            countedSplits = 0;
+          }
         }
       }
       refreshButtons();
@@ -134,6 +156,8 @@
       running = true;
       countedSplits = 0;
       stoppedSeconds = 0;
+      localFinalized = false;
+      pendingFinal = false;
       startEpochMs = Date.now();
       startPerfMs = performance.now();
       baseSeconds = 0;
@@ -151,11 +175,25 @@
       if (final) {
         stoppedSeconds = sec;
         running = false;
+        localFinalized = true;
+        pendingFinal = true;
       }
       last.textContent = (final ? "Arrivée" : "Relayeur " + countedSplits) +
         " : " + formatTime(sec) + " — enregistrement…";
       refreshButtons();
       sendAction("split", {elapsed_seconds: sec, split_number: countedSplits});
+    });
+    stop.addEventListener("click", () => {
+      if (!running || resultId == null) return;
+      const sec = Math.round(elapsed() * 100) / 100;
+      if (sec <= 0) return;
+      stoppedSeconds = sec;
+      running = false;
+      localFinalized = true;
+      pendingFinal = true;
+      last.textContent = "Arrivée : " + formatTime(sec) + " — enregistrement…";
+      refreshButtons();
+      sendAction("finish", {elapsed_seconds: sec});
     });
     window.addEventListener("message", event => {
       if (event.data && event.data.type === "streamlit:render") configure(event.data.args);
