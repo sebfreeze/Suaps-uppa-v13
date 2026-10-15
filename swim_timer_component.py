@@ -8,7 +8,7 @@ _SWIM_TIMER = components.declare_component(
 )
 
 
-def render_swim_timer(result_id, running, start_epoch, split_count, relay_count, final_seconds, key):
+def render_swim_timer(result_id, running, start_epoch, split_count, relay_count, final_seconds, key, saved_splits=None):
     return _SWIM_TIMER(
         result_id=int(result_id),
         running=bool(running),
@@ -16,6 +16,7 @@ def render_swim_timer(result_id, running, start_epoch, split_count, relay_count,
         split_count=int(split_count),
         relay_count=int(relay_count),
         final_seconds=float(final_seconds) if final_seconds is not None else None,
+        saved_splits=list(saved_splits or []),
         key=key,
         default=None,
     )
