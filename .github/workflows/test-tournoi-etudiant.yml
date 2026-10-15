@@ -1,0 +1,24 @@
+name: Test tournoi étudiant
+on:
+  push:
+    branches:
+      - feature/tournoi-inscrits-rugby-20261015
+  pull_request:
+    paths:
+      - 'tournoi_etudiant.py'
+      - 'app.py'
+      - 'app_legacy.py'
+      - 'tests/test_tournoi_etudiant.py'
+      - '.github/workflows/test-tournoi-etudiant.yml'
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Syntaxe de tous les modules Python
+        run: python -m compileall -q .
+      - name: Tests métier sans dépendances externes
+        run: python -m unittest discover -s tests -p test_tournoi_etudiant.py -v
