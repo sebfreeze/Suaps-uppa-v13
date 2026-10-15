@@ -1050,6 +1050,11 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
             st.info("Crée ou importe les équipes avant le chronométrage.")
 
         if teams:
+            from swim_team_management import render_swim_team_management
+            render_swim_team_management(
+                st, rows, exe, comp, teams, _swim_reflow_category
+            )
+
             st.divider()
             st.markdown("#### 🏊‍♀️ Nageurs de l'équipe")
             managed_team = st.selectbox(
@@ -1400,6 +1405,14 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
         split_count=len(current_splits),
         relay_count=relay_count,
         final_seconds=saved_before["temps_final"] if saved_before else None,
+        saved_splits=[
+            {
+                "numero": int(s["numero"]),
+                "temps_split": float(s.get("temps_split") or 0),
+                "temps_cumule": float(s.get("temps_cumule") or 0),
+            }
+            for s in current_splits
+        ],
         key=key_base + "_live",
     )
     _apply_swim_timer_action(

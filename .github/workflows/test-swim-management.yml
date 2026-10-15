@@ -1,0 +1,36 @@
+name: Vérification gestion équipes et chrono natation
+on:
+  push:
+    branches:
+      - feature/swim-relay-live-team-management-20261015
+  pull_request:
+    paths:
+      - 'sports_co_module.py'
+      - 'swim_team_management.py'
+      - 'swim_timer_component.py'
+      - 'swim_timer_frontend/index.html'
+      - 'tests/test_swim_team_management.py'
+      - '.github/workflows/test-swim-management.yml'
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Vérifier la syntaxe Python
+        run: python -m py_compile sports_co_module.py swim_team_management.py swim_timer_component.py tests/test_swim_team_management.py
+      - name: Tester les opérations sur les équipes
+        run: python -m unittest discover -s tests -p test_swim_team_management.py -v
+      - name: Vérifier la syntaxe JavaScript du chronomètre
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          source = Path("swim_timer_frontend/index.html").read_text(encoding="utf-8")
+          match = re.search(r"<script>(.*?)</script>", source, re.DOTALL)
+          assert match is not None, "Script du chrono absent"
+          Path("/tmp/suaps-swim-timer.js").write_text(match.group(1), encoding="utf-8")
+          PY
+          node --check /tmp/suaps-swim-timer.js
