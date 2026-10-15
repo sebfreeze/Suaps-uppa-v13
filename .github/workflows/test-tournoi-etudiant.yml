@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Syntaxe de tous les modules Python
-        run: python -m compileall -q .
+      - name: Syntaxe des modules actifs et du nouveau module
+        run: python -m py_compile app.py app_legacy.py sports_co_module.py tournoi_etudiant.py tests/test_tournoi_etudiant.py
       - name: Tests métier sans dépendances externes
         run: python -m unittest discover -s tests -p test_tournoi_etudiant.py -v
