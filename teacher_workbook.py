@@ -1054,7 +1054,7 @@ def _students_for_session(qdf, session):
     Priorité absolue au créneau explicitement lié à la séance. Les anciennes
     séances conservent le comportement historique par activité/groupe.
     """
-    linked_offer_id = _session_offer_id(qdf, int(session["id"]))
+    linked_offer_id = _session_offer_id(qdf, int(session["id"])) if session.get("id") is not None else None
     if linked_offer_id is not None:
         return _students_for_offer(qdf, linked_offer_id)
 
