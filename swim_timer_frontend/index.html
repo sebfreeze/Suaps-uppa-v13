@@ -58,6 +58,7 @@
     // localement pendant que le résultat final est en cours d'enregistrement.
     let localFinalized = false;
     let pendingFinal = false;
+    let pendingStart = false;
 
     function send(type, data) {
       window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, data || {}), "*");
@@ -114,6 +115,7 @@
         running = incomingRunning;
         localFinalized = !incomingRunning && stoppedSeconds > 0;
         pendingFinal = false;
+        pendingStart = false;
         startEpochMs = incomingStart;
         if (running) {
           baseSeconds = Math.max(0, (Date.now() - startEpochMs) / 1000);
@@ -122,12 +124,13 @@
         last.textContent = "Un passage = un temps intermédiaire, sans arrêter le chrono.";
       } else {
         countedSplits = Math.max(countedSplits, Number(args.split_count || 0));
+        if (incomingRunning) pendingStart = false;
         if (incomingRunning && !running && !localFinalized) {
           running = true;
           startEpochMs = incomingStart;
           baseSeconds = Math.max(0, (Date.now() - startEpochMs) / 1000);
           startPerfMs = performance.now();
-        } else if (!incomingRunning && running) {
+        } else if (!incomingRunning && running && !pendingStart) {
           // Arrêt ou saisie manuelle reçu du serveur.
           stoppedSeconds = Number(args.final_seconds || 0);
           running = false;
@@ -139,6 +142,7 @@
             stoppedSeconds = Number(args.final_seconds);
             localFinalized = true;
             pendingFinal = false;
+            pendingStart = false;
             last.textContent = "Temps final confirmé et enregistré.";
           } else if (!pendingFinal && Number(args.split_count || 0) === 0) {
             // Remise à zéro volontaire dans l'application.
@@ -158,6 +162,7 @@
       stoppedSeconds = 0;
       localFinalized = false;
       pendingFinal = false;
+      pendingStart = true;
       startEpochMs = Date.now();
       startPerfMs = performance.now();
       baseSeconds = 0;
