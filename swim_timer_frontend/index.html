@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { font-family: system-ui, -apple-system, sans-serif; color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 3px; color: #f8fafc; background: transparent; }
+    .timer { text-align: center; background: #102338; border: 1px solid #355475;
+             border-radius: 16px; padding: 14px 10px 12px; }
+    .hint { font-size: 13px; letter-spacing: .04em; font-weight: 600; color: #c5d9ec; }
+    .digits { font-variant-numeric: tabular-nums; font-family: ui-monospace, Menlo, Consolas, monospace;
+              font-size: clamp(38px, 10vw, 76px); font-weight: 850; line-height: 1.4;
+              letter-spacing: -.04em; white-space: nowrap; }
+    .status { margin-bottom: 12px; font-size: 13px; color: #bcd3eb; min-height: 18px; }
+    .actions { display: flex; gap: 10px; }
+    button { cursor: pointer; touch-action: manipulation; min-height: 60px; padding: 12px 8px;
+             border: none; border-radius: 12px; font-size: clamp(15px, 3.5vw, 19px);
+             font-weight: 800; flex: 1; }
+    button:disabled { cursor: default; opacity: .42; }
+    #go { background: #22c55e; color: #052814; flex: .9; }
+    #split { background: #eaf3ff; color: #123354; flex: 1.6; }
+    #split.final { background: #fbbf24; color: #3d2300; }
+    #last { margin: 10px 0 1px; min-height: 18px; font-size: 13px; color: #c9e4f8; }
+  </style>
+</head>
+<body>
+  <div class="timer" aria-label="Chronomètre natation">
+    <div class="hint">⏱ CHRONOMÈTRE EN DIRECT</div>
+    <div class="digits" id="clock" role="timer" aria-live="off">00:00.00</div>
+    <div class="status" id="status">Prêt au départ</div>
+    <div class="actions">
+      <button id="go" type="button">▶ DÉPART</button>
+      <button id="split" type="button" disabled>⏱ PASSAGE</button>
+    </div>
+    <div id="last" aria-live="polite">Les temps sont enregistrés au toucher du bouton.</div>
+  </div>
+  <script>
+    "use strict";
+    const clock = document.getElementById("clock");
+    const status = document.getElementById("status");
+    const go = document.getElementById("go");
+    const split = document.getElementById("split");
+    const last = document.getElementById("last");
+    let resultId = null;
+    let relayCount = 0;
+    let countedSplits = 0;
+    let running = false;
+    let startEpochMs = 0;
+    let startPerfMs = 0;
+    let baseSeconds = 0;
+    let stoppedSeconds = 0;
+
+    function send(type, data) {
+      window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, data || {}), "*");
+    }
+    function sendAction(action, values) {
+      send("streamlit:setComponentValue", {
+        dataType: "json",
+        value: Object.assign({
+          action,
+          result_id: resultId,
+          event_id: Date.now() + "-" + Math.random().toString(36).slice(2),
+        }, values || {})
+      });
+    }
+    function elapsed() {
+      return running ? Math.max(0, baseSeconds + (performance.now() - startPerfMs) / 1000) : stoppedSeconds;
+    }
+    function formatTime(secs) {
+      const centis = Math.max(0, Math.floor((secs + 0.000001) * 100));
+      const minutes = Math.floor(centis / 6000);
+      const remainder = centis % 6000;
+      return String(minutes).padStart(2, "0") + ":" +
+             String(Math.floor(remainder / 100)).padStart(2, "0") + "." +
+             String(remainder % 100).padStart(2, "0");
+    }
+    function refreshButtons() {
+      go.disabled = running;
+      split.disabled = !running || countedSplits >= relayCount;
+      split.classList.toggle("final", relayCount > 0 && countedSplits === relayCount - 1);
+      split.textContent = relayCount > 0 && countedSplits === relayCount - 1
+        ? "🏁 ARRIVÉE / TEMPS FINAL"
+        : "⏱ RELAYEUR " + (countedSplits + 1) + " / " + relayCount;
+      status.textContent = running
+        ? "En cours • " + countedSplits + " / " + relayCount + " passage(s)"
+        : (stoppedSeconds > 0 ? "Terminé • temps enregistré" : "Prêt au départ");
+    }
+    function tick() {
+      clock.textContent = formatTime(elapsed());
+      requestAnimationFrame(tick);
+    }
+    function configure(args) {
+      if (!args || args.result_id == null) return;
+      const incomingId = Number(args.result_id);
+      const incomingRunning = Boolean(args.running);
+      const incomingStart = Number(args.start_epoch || 0) * 1000;
+      const newResult = incomingId !== resultId;
+      relayCount = Number(args.relay_count || 0);
+      if (newResult) {
+        resultId = incomingId;
+        countedSplits = Number(args.split_count || 0);
+        stoppedSeconds = Number(args.final_seconds || 0);
+        running = incomingRunning;
+        startEpochMs = incomingStart;
+        if (running) {
+          baseSeconds = Math.max(0, (Date.now() - startEpochMs) / 1000);
+          startPerfMs = performance.now();
+        }
+        last.textContent = "Un passage = un temps intermédiaire, sans arrêter le chrono.";
+      } else {
+        countedSplits = Math.max(countedSplits, Number(args.split_count || 0));
+        if (incomingRunning && !running) {
+          running = true;
+          startEpochMs = incomingStart;
+          baseSeconds = Math.max(0, (Date.now() - startEpochMs) / 1000);
+          startPerfMs = performance.now();
+        } else if (!incomingRunning && running && args.final_seconds != null) {
+          stoppedSeconds = Number(args.final_seconds);
+          running = false;
+        } else if (!incomingRunning && !running) {
+          stoppedSeconds = Number(args.final_seconds || 0);
+          if (Number(args.split_count || 0) === 0) countedSplits = 0;
+        }
+      }
+      refreshButtons();
+      send("streamlit:setFrameHeight", {height: document.documentElement.scrollHeight + 6});
+    }
+    go.addEventListener("click", () => {
+      if (running || resultId == null) return;
+      running = true;
+      countedSplits = 0;
+      stoppedSeconds = 0;
+      startEpochMs = Date.now();
+      startPerfMs = performance.now();
+      baseSeconds = 0;
+      last.textContent = "Départ enregistré sur le téléphone.";
+      refreshButtons();
+      sendAction("start", {start_epoch: startEpochMs / 1000});
+    });
+    split.addEventListener("click", () => {
+      if (!running || countedSplits >= relayCount) return;
+      // Mesure prise ici, avant l'échange réseau avec le serveur Streamlit.
+      const sec = Math.round(elapsed() * 100) / 100;
+      if (sec <= 0) return;
+      countedSplits++;
+      const final = countedSplits === relayCount;
+      if (final) {
+        stoppedSeconds = sec;
+        running = false;
+      }
+      last.textContent = (final ? "Arrivée" : "Relayeur " + countedSplits) +
+        " : " + formatTime(sec) + " — enregistrement…";
+      refreshButtons();
+      sendAction("split", {elapsed_seconds: sec, split_number: countedSplits});
+    });
+    window.addEventListener("message", event => {
+      if (event.data && event.data.type === "streamlit:render") configure(event.data.args);
+    });
+    send("streamlit:componentReady", {apiVersion: 1});
+    requestAnimationFrame(tick);
+    window.addEventListener("load", () => {
+      send("streamlit:setFrameHeight", {height: document.documentElement.scrollHeight + 6});
+    });
+  </script>
+</body>
+</html>
