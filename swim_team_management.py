@@ -128,7 +128,7 @@ def render_swim_team_management(st, rows, exe, comp, teams, reflow):
         university_free = st.text_input(
             "Autre université / AS",
             value=previous_university if selected_university == "Autre / saisie libre" else "",
-            disabled=university_choice != "Autre / saisie libre",
+            help="Renseigné uniquement si « Autre / saisie libre » est sélectionné.",
         )
         assignment = st.radio(
             "Placement", ["Automatique par niveau", "Manuel"],
@@ -137,7 +137,7 @@ def render_swim_team_management(st, rows, exe, comp, teams, reflow):
         a, b = st.columns(2)
         new_serie = a.number_input(
             "Série", min_value=1, value=_positive_int(team.get("serie")),
-            step=1, disabled=assignment != "Manuel",
+            step=1, help="Utilisé uniquement pour un placement manuel.",
         )
         new_ligne = b.number_input(
             "Ligne d'eau", min_value=1,
@@ -146,7 +146,7 @@ def render_swim_team_management(st, rows, exe, comp, teams, reflow):
                 _positive_int(team.get("ligne"), 3),
                 _positive_int(comp.get("nb_lignes"), 5),
             ),
-            step=1, disabled=assignment != "Manuel",
+            step=1, help="Utilisé uniquement pour un placement manuel.",
         )
         save = st.form_submit_button(
             "💾 Enregistrer les modifications", type="primary",
