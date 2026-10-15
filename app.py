@@ -400,7 +400,7 @@ if globals().get("menu") == "Tournoi étudiant":
     init_sports_co_db(_competition_exec)
     init_access(_competition_exec)
     student_portal(_competition_rows, _competition_one, _competition_exec)
-elif if globals().get("menu") == PEDAGOGY_MENU_LABEL:
+elif globals().get("menu") == PEDAGOGY_MENU_LABEL:
     _render_pedagogy()
 elif globals().get("menu") == WORKBOOK_MENU_LABEL:
     if st.session_state.get("role") == "Enseignant":
