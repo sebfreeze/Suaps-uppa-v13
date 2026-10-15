@@ -1408,8 +1408,8 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
         saved_splits=[
             {
                 "numero": int(s["numero"]),
-                "temps_split": float(s["temps_split"]),
-                "temps_cumule": float(s["temps_cumule"]),
+                "temps_split": float(s.get("temps_split") or 0),
+                "temps_cumule": float(s.get("temps_cumule") or 0),
             }
             for s in current_splits
         ],
