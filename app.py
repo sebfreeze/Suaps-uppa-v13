@@ -181,6 +181,12 @@ def _render_competition():
         role=st.session_state.get("role", "Étudiant"),
     )
 
+    if st.session_state.get("role") == "Enseignant":
+        from tournoi_etudiant import init_access, teacher_setup
+        init_access(_competition_exec)
+        with st.expander("🔗 Accès étudiant — tournoi existant"):
+            teacher_setup(_competition_rows, _competition_one, _competition_exec)
+
 
 def _teacher_observation(presence_row, evaluation_row):
     if evaluation_row is not None:
@@ -388,7 +394,13 @@ def _render_presence_note_evaluation():
         st.rerun()
 
 
-if globals().get("menu") == PEDAGOGY_MENU_LABEL:
+if globals().get("menu") == "Tournoi étudiant":
+    from sports_co_module import init_sports_co_db
+    from tournoi_etudiant import init_access, student_portal
+    init_sports_co_db(_competition_exec)
+    init_access(_competition_exec)
+    student_portal(_competition_rows, _competition_one, _competition_exec)
+elif globals().get("menu") == PEDAGOGY_MENU_LABEL:
     _render_pedagogy()
 elif globals().get("menu") == WORKBOOK_MENU_LABEL:
     if st.session_state.get("role") == "Enseignant":

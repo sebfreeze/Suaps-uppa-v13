@@ -914,7 +914,7 @@ if st.sidebar.button("🚪 Se déconnecter", type="primary", use_container_width
     st.rerun()
 
 if st.session_state.role == "Étudiant":
-    menu = st.sidebar.radio("Navigation", ["Accueil", "Portail étudiant"])
+    menu = st.sidebar.radio("Navigation", ["Accueil", "Portail étudiant", "Tournoi étudiant"])
 elif st.session_state.role in {"Chronométreur étudiant", "Gestion compétition"}:
     menu = st.sidebar.radio("Navigation", ["Accueil", "Compétition"])
 else:
