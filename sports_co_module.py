@@ -688,6 +688,34 @@ def _apply_swim_timer_action(st, event, key_base, result_id, relay_count, rows, 
         )
         changed = True
 
+    elif action == "finish" and st.session_state.get(running_key, False):
+        # Bouton ARRÊTER indépendant : on sauvegarde l'arrivée même si
+        # un passage intermédiaire a été oublié, sans inventer de temps.
+        try:
+            elapsed = float(event["elapsed_seconds"])
+        except (TypeError, ValueError, KeyError):
+            return
+        existing = rows(
+            "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+            (result_id,),
+        )
+        next_number = len(existing) + 1
+        previous = float(existing[-1]["temps_cumule"]) if existing else 0.0
+        if not _math.isfinite(elapsed) or elapsed <= previous:
+            return
+        # S'il ne manquait que le dernier relayeur, l'arrivée est son split.
+        # Sinon, garder les splits existants et enregistrer le temps final.
+        if next_number == relay_count:
+            _save_swim_split(rows, exe, result_id, elapsed, "Chrono téléphone")
+        exe(
+            """UPDATE natation_resultats
+               SET temps_final=?,mode_saisie='Chrono',statut='Terminé'
+               WHERE id=?""",
+            (elapsed, result_id),
+        )
+        st.session_state[running_key] = False
+        changed = True
+
     elif action == "split" and st.session_state.get(running_key, False):
         try:
             elapsed = float(event["elapsed_seconds"])
@@ -1402,6 +1430,11 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
     saved = one("SELECT * FROM natation_resultats WHERE id=?", (result_id,))
     if saved and saved["temps_final"] is not None:
         st.success(f"Temps final : {_swim_fmt(saved['temps_final'])}")
+        if len(splits) < relay_count:
+            st.warning(
+                f"Temps final enregistré. {relay_count - len(splits)} "
+                "passage(s) intermédiaire(s) manquant(s) pour cette épreuve."
+            )
 
     st.divider()
     st.markdown("#### ✍️ Saisie manuelle")
