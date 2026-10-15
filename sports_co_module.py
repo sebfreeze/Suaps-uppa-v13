@@ -1433,6 +1433,7 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
                    WHERE id=?""",
                 (float(seconds), result_id),
             )
+            st.session_state[running_key] = False
             st.success("Temps final enregistré.")
             st.rerun()
 
