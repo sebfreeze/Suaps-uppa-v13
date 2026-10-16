@@ -1420,6 +1420,39 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
     )
     st.caption("Le temps est mesuré au toucher sur le téléphone ; l'enregistrement se fait ensuite dans l'application.")
 
+    st.markdown("#### ✍️ Saisie manuelle rapide (si besoin)")
+    st.caption("Formats acceptés : 62.35 • 1:02.35 • 1'02.35")
+    with st.form(f"swim_manual_{result_id}"):
+        manual = st.text_input("Temps", placeholder="Exemple : 1:02.35")
+        save_final = st.form_submit_button("🏁 Enregistrer le temps final", type="primary", use_container_width=True)
+        add_split = st.form_submit_button("➕ Ajouter un passage intermédiaire", use_container_width=True)
+    if add_split or save_final:
+        seconds = _swim_seconds(manual)
+        if seconds is None or seconds <= 0:
+            st.error("Temps invalide.")
+        elif add_split:
+            current_splits = rows(
+                "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+                (result_id,),
+            )
+            if len(current_splits) >= int(event["nb_splits"] or 0):
+                st.error("Le nombre d'intermédiaires prévu est déjà atteint.")
+            else:
+                _save_swim_split(rows, exe, result_id, seconds, "Manuel")
+                st.success("Temps intermédiaire ajouté.")
+                st.rerun()
+        else:
+            exe(
+                """UPDATE natation_resultats
+                   SET temps_final=?,mode_saisie='Manuel',statut='Terminé'
+                   WHERE id=?""",
+                (float(seconds), result_id),
+            )
+            st.session_state[running_key] = False
+            st.success("Temps final enregistré.")
+            st.rerun()
+
+
     splits = rows(
         "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
         (result_id,),
@@ -1448,40 +1481,6 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
                 f"Temps final enregistré. {relay_count - len(splits)} "
                 "passage(s) intermédiaire(s) manquant(s) pour cette épreuve."
             )
-
-    st.divider()
-    st.markdown("#### ✍️ Saisie manuelle")
-    st.caption("Formats acceptés : 62.35 • 1:02.35 • 1'02.35")
-    with st.form(f"swim_manual_{result_id}"):
-        manual = st.text_input("Temps")
-        m1, m2 = st.columns(2)
-        add_split = m1.form_submit_button("Ajouter comme intermédiaire", use_container_width=True)
-        save_final = m2.form_submit_button("Enregistrer comme temps final", type="primary", use_container_width=True)
-    if add_split or save_final:
-        seconds = _swim_seconds(manual)
-        if seconds is None or seconds <= 0:
-            st.error("Temps invalide.")
-        elif add_split:
-            current_splits = rows(
-                "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
-                (result_id,),
-            )
-            if len(current_splits) >= int(event["nb_splits"] or 0):
-                st.error("Le nombre d'intermédiaires prévu est déjà atteint.")
-            else:
-                _save_swim_split(rows, exe, result_id, seconds, "Manuel")
-                st.success("Temps intermédiaire ajouté.")
-                st.rerun()
-        else:
-            exe(
-                """UPDATE natation_resultats
-                   SET temps_final=?,mode_saisie='Manuel',statut='Terminé'
-                   WHERE id=?""",
-                (float(seconds), result_id),
-            )
-            st.session_state[running_key] = False
-            st.success("Temps final enregistré.")
-            st.rerun()
 
     if st.button("🗑️ Réinitialiser ce chrono", use_container_width=True, key=key_base+"_reset"):
         exe("DELETE FROM natation_splits WHERE resultat_id=?", (result_id,))
