@@ -29,10 +29,11 @@
     .relay-title { display: flex; justify-content: space-between; align-items: center;
                    font-size: 14px; font-weight: 800; margin-bottom: 6px; }
     #relay-progress { color: #c5d9ec; font-variant-numeric: tabular-nums; }
+    .relay-table-scroll { max-height: 188px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
     .relay-table { width: 100%; border-collapse: collapse; font-size: 14px;
                    font-variant-numeric: tabular-nums; }
     .relay-table th, .relay-table td { padding: 6px 4px; border-bottom: 1px solid #36536d; }
-    .relay-table th { color: #c3d7ea; font-size: 12px; }
+    .relay-table th { color: #c3d7ea; font-size: 12px; position: sticky; top: 0; background: #172f49; }
     .relay-table th:not(:first-child), .relay-table td:not(:first-child) { text-align: right; }
     .relay-table td:last-child { font-weight: 750; }
     #relay-total { text-align: right; margin-top: 8px; font-weight: 800; font-size: 15px; }
@@ -52,10 +53,12 @@
     <div id="last" aria-live="polite">Les temps sont enregistrés au toucher du bouton.</div>
     <div class="relay-panel" aria-label="Temps individuels et cumulés des relayeurs">
       <div class="relay-title"><span>🏊 Temps des relayeurs</span><span id="relay-progress">0 / 0</span></div>
+      <div class="relay-table-scroll">
       <table class="relay-table" aria-label="Temps par relayeur">
         <thead><tr><th>Relayeur</th><th>Individuel</th><th>Cumul équipe</th></tr></thead>
         <tbody id="relay-rows"><tr><td colspan="3" class="relay-empty">En attente du départ</td></tr></tbody>
       </table>
+      </div>
       <div id="relay-total">Cumul équipe : 00:00.00</div>
     </div>
   </div>
@@ -84,9 +87,18 @@
     let localFinalized = false;
     let pendingFinal = false;
     let pendingStart = false;
+    let lastReportedFrameHeight = 0;
 
     function send(type, data) {
       window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, data || {}), "*");
+    }
+    // Mesure du contenu : scrollHeight pouvait hériter de la hauteur de
+    // l’iframe et augmenter l’espace noir à chaque nouveau rendu.
+    function reportFrameHeight() {
+      const height = Math.ceil(document.querySelector(".timer").getBoundingClientRect().height + 6);
+      if (height <= 0 || height === lastReportedFrameHeight) return;
+      lastReportedFrameHeight = height;
+      send("streamlit:setFrameHeight", {height});
     }
     function sendAction(action, values) {
       send("streamlit:setComponentValue", {
@@ -147,7 +159,7 @@
       relayTotal.textContent = "Cumul équipe : " + formatTime(total) +
         (!running && stoppedSeconds > cumulative + 0.01 && relaySplits.length < relayCount
           ? " (passages manquants)" : "");
-      send("streamlit:setFrameHeight", {height: document.documentElement.scrollHeight + 6});
+      reportFrameHeight();
     }
     function refreshButtons() {
       go.disabled = running || localFinalized;
@@ -228,7 +240,7 @@
         }
       }
       refreshButtons();
-      send("streamlit:setFrameHeight", {height: document.documentElement.scrollHeight + 6});
+      reportFrameHeight();
     }
     go.addEventListener("click", () => {
       if (running || resultId == null) return;
@@ -283,9 +295,14 @@
       if (event.data && event.data.type === "streamlit:render") configure(event.data.args);
     });
     send("streamlit:componentReady", {apiVersion: 1});
+    window.addEventListener("resize", reportFrameHeight);
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(reportFrameHeight).observe(document.querySelector(".timer"));
+    }
+    reportFrameHeight();
     requestAnimationFrame(tick);
     window.addEventListener("load", () => {
-      send("streamlit:setFrameHeight", {height: document.documentElement.scrollHeight + 6});
+      reportFrameHeight();
     });
   </script>
 </body>
