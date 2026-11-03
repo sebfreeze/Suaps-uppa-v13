@@ -703,10 +703,42 @@ def _apply_swim_timer_action(st, event, key_base, result_id, relay_count, rows, 
         previous = float(existing[-1]["temps_cumule"]) if existing else 0.0
         if not _math.isfinite(elapsed) or elapsed <= previous:
             return
-        # S'il ne manquait que le dernier relayeur, l'arrivée est son split.
-        # Sinon, garder les splits existants et enregistrer le temps final.
+        # L'événement final embarque les passages mesurés dans le navigateur.
+        # Un événement intermédiaire peut arriver tard ou être remplacé par
+        # le dernier clic Streamlit : restaurer les passages manquants ici.
+        captured = event.get("captured_splits")
+        if isinstance(captured, list) and len(captured) <= relay_count:
+            previous_capture = 0.0
+            valid_capture = []
+            for index, item in enumerate(captured, 1):
+                if not isinstance(item, dict):
+                    break
+                try:
+                    number = int(item["number"])
+                    cumulative = float(item["cumulative"])
+                except (TypeError, ValueError, KeyError):
+                    break
+                if (number != index or not _math.isfinite(cumulative) or
+                        cumulative <= previous_capture or cumulative > elapsed):
+                    break
+                valid_capture.append(cumulative)
+                previous_capture = cumulative
+            if len(valid_capture) == len(captured):
+                for index in range(len(existing), len(valid_capture)):
+                    _save_swim_split(
+                        rows, exe, result_id, valid_capture[index], "Chrono téléphone"
+                    )
+                existing = rows(
+                    "SELECT * FROM natation_splits WHERE resultat_id=? ORDER BY numero",
+                    (result_id,),
+                )
+                next_number = len(existing) + 1
+        # Arrêt classique : si seul le dernier relayeur manque, ajouter
+        # l'arrivée. Les relais absents ne sont jamais inventés.
         if next_number == relay_count:
-            _save_swim_split(rows, exe, result_id, elapsed, "Chrono téléphone")
+            previous = float(existing[-1]["temps_cumule"]) if existing else 0.0
+            if elapsed > previous:
+                _save_swim_split(rows, exe, result_id, elapsed, "Chrono téléphone")
         exe(
             """UPDATE natation_resultats
                SET temps_final=?,mode_saisie='Chrono',statut='Terminé'
