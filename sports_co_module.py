@@ -7,6 +7,19 @@ from competition_access import allowed_swim_tabs
 
 SPORTS_CO = ["Natation", "Rugby", "Basket-ball", "Handball", "Volley-ball", "Football", "Futsal", "Badminton", "Pelote Basque"]
 
+# Références fournies par le SUAPS, arrêtées au 01/09/2023.
+# Temps en secondes ; les références mixtes sont les moyennes H/F,
+# arrondies au centième selon le tableau fourni.
+SWIM_REFERENCE_RECORDS_2023 = {
+    "Féminin": {"C1": 258.94, "C2-PAP": 54.05, "C2-DOS": 54.89,
+                "C2-BR": 62.36, "C2-NL": 50.25, "C3": 477.42},
+    "Masculin": {"C1": 234.81, "C2-PAP": 47.78, "C2-DOS": 48.33,
+                 "C2-BR": 55.28, "C2-NL": 44.84, "C3": 443.42},
+    "Mixte": {"C1": 246.88, "C2-PAP": 50.92, "C2-DOS": 51.61,
+              "C2-BR": 58.82, "C2-NL": 47.55, "C3": 460.42},
+}
+
+
 
 def _match_score_or_none(value):
     """Normalise un score DB ; les champs vides peuvent devenir NaN via pandas."""
@@ -174,6 +187,17 @@ def _ensure_swim_default_competition(rows, one, exe, date):
             ON CONFLICT(competition_id,code) DO NOTHING""",
             (comp["id"], code, nom, bloc, coef, splits, ordre),
         )
+    # Préremplissage non destructif : conserve toute référence déjà modifiée
+    # par un organisateur, y compris pour une compétition existante.
+    for categorie, records in SWIM_REFERENCE_RECORDS_2023.items():
+        for code_epreuve, temps_rm in records.items():
+            exe(
+                """INSERT INTO natation_records_reference(
+                    competition_id,categorie,code_epreuve,temps_rm
+                ) VALUES(?,?,?,?)
+                ON CONFLICT(competition_id,categorie,code_epreuve) DO NOTHING""",
+                (comp["id"], categorie, code_epreuve, temps_rm),
+            )
     return one("SELECT * FROM natation_competitions WHERE id=?", (comp["id"],))
 
 
@@ -1253,8 +1277,8 @@ def render_natation_competition(st, rows, one, exe, date, role="Enseignant"):
         )
         st.markdown("##### Références record du monde")
         st.caption(
-            "Renseigne les références officielles en secondes. "
-            "Elles restent modifiables si la FFSU publie une actualisation."
+            "Références fournies par le SUAPS au 01/09/2023, préremplies automatiquement. "
+            "Ces valeurs restent modifiables ; il ne s'agit pas d'une mise à jour en direct."
         )
         ref_labels = [
             ("C1", "400 4N"),
