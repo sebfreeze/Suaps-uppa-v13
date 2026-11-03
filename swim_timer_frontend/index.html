@@ -277,7 +277,15 @@
       last.textContent = (final ? "Arrivée" : "Relayeur " + countedSplits) +
         " : " + formatTime(individual) + " • cumul " + formatTime(sec) + " — enregistrement…";
       refreshButtons();
-      sendAction("split", {elapsed_seconds: sec, split_number: countedSplits});
+      // Le dernier relais doit enregistrer atomiquement le temps final
+      // et les passages, même si des clics précédents arrivent en retard.
+      sendAction(final ? "finish" : "split", {
+        elapsed_seconds: sec,
+        split_number: countedSplits,
+        ...(final ? {captured_splits: relaySplits.map(s => ({
+          number: s.number, cumulative: s.cumulative
+        }))} : {})
+      });
     });
     stop.addEventListener("click", () => {
       if (!running || resultId == null) return;
@@ -289,7 +297,12 @@
       pendingFinal = true;
       last.textContent = "Arrivée : " + formatTime(sec) + " — enregistrement…";
       refreshButtons();
-      sendAction("finish", {elapsed_seconds: sec});
+      sendAction("finish", {
+        elapsed_seconds: sec,
+        captured_splits: relaySplits.map(s => ({
+          number: s.number, cumulative: s.cumulative
+        }))
+      });
     });
     window.addEventListener("message", event => {
       if (event.data && event.data.type === "streamlit:render") configure(event.data.args);
